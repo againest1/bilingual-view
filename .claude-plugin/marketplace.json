@@ -1,0 +1,16 @@
+{
+  "name": "bilingual-view-local",
+  "metadata": {
+    "description": "Local installation source for the Bilingual View translation mod."
+  },
+  "owner": {
+    "name": "Bilingual View contributors"
+  },
+  "plugins": [
+    {
+      "name": "bilingual-view",
+      "source": "./",
+      "description": "English submission of Chinese input, Chinese message and question displays, shared host settings, on/off controls, and an on-demand model list for CLI and Desktop Code."
+    }
+  ]
+}

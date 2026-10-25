@@ -1,0 +1,4 @@
+{
+  "description": "Input translation and display-only final-answer translation",
+  "modules": ["./register.ts"]
+}

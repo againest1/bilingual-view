@@ -1,0 +1,534 @@
+import type { ButtonProps, EngineInterface, Register, PluginOptions, RenderElement, RenderInput } from 'claude-code';
+import type { RuntimeIO } from './ports.ts';
+import type { DisplayMessageRef, FinalAnswerRef, State, RecordEntry } from './state.ts';
+import { newState, newView } from './state.ts';
+import { finalBlocks, needsTranslation, needsDisplayTranslation, protectText, textBlocks, translatedChineseDisplay } from './text.ts';
+import { aborted, translate } from './translation.ts';
+import { memoryKey, outputWorkKey, readRecord, saveRecord } from './storage.ts';
+import { ensureTranslation, displayRecord, pollVisible, ready } from './tasks.ts';
+import { referenceFor, refreshHistory } from './history.ts';
+import { effectiveSettings, enabled, fetchModels, SETTINGS_PANE } from './settings.ts';
+import { providerConfig } from './provider.ts';
+import { questionId, answerId, questionSource, drawQuestions, drawQuestionResult, translateAnswers } from './questions.ts';
+import type { Question, QuestionResult } from './questions.ts';
+
+// Keep every Claude API call visible in this entry module. The domain modules
+// receive callbacks, never `$` or a host namespace, and need no extra process.
+function hostIO($: EngineInterface): RuntimeIO {
+  return {
+    cacheFiles: {
+      read: path => $.fs.read($.plugin.root + '/' + path),
+      write: (path, text) => $.fs.write($.plugin.root + '/' + path, text),
+      exists: path => $.fs.exists($.plugin.root + '/' + path),
+    },
+    env: {
+      baseUrl: () => $.env.get('BILINGUAL_VIEW_BASE_URL'),
+      model: () => $.env.get('BILINGUAL_VIEW_MODEL'),
+      apiKey: () => $.env.get('BILINGUAL_VIEW_API_KEY'),
+    },
+    fetch: (url, init) => $.http.fetch(url, init),
+    now: () => $.clock.now(),
+    invalidate: () => $.ui.invalidate('ui.render'),
+    toast: text => $.ui.toast(text),
+    after: (ms, run) => { $.clock.after(ms, run); },
+    history: { read: path => $.fs.read(path), stat: path => $.fs.stat(path) },
+  };
+}
+
+async function humanOrigin($: EngineInterface, kind: string): Promise<boolean> {
+  // Desktop hosts can submit through the SDK transport. Accept those only
+  // while a desktop surface is attached, not in headless CLI/SDK automation.
+  if (kind === 'composer' || kind === 'bridge') return true;
+  if (kind === 'sdk') return (await $.session.surfaces()).includes('desktop');
+  return false;
+}
+
+function switchView(state: State, session: string, path?: string): void {
+  state.session = session;
+  state.view = newView(session, path);
+  state.pending = [];
+  state.turns.clear();
+  state.activeTurn = null;
+  state.records.clear();
+  state.originals.clear();
+  // Accepted display work belongs to the instance, not the current view.
+}
+
+type ModelListing = { models: string[]; loading: boolean; error: string };
+
+// Inspect text only to choose a control row; the native body stays untouched.
+function separateMessageControl(text: string): boolean {
+  const protectedText = protectText(text.trimEnd());
+  const last = protectedText.text.match(new RegExp(protectedText.prefix + '(\\d+)_END$'));
+  if (last) {
+    const literal = protectedText.values[Number(last[1])]!;
+    if (/\n|^\$\$|^\\\[|^\s*(?:`{3,}|~{3,})/.test(literal)) return true;
+  }
+  const paragraph = protectedText.text.split(/\n\s*\n/).at(-1) ?? '';
+  return /^(?: {4}|\t| {0,3}(?:>|#{1,6}\s|[-+*]\s|\d+[.)]\s))/m.test(paragraph)
+    || /^ {0,3}(?:[-_*]\s*){3,}$/m.test(paragraph)
+    || paragraph.split('\n').some(line => line.includes('|')
+      && /^\s*\|?\s*:?-+:?\s*(?:\|\s*:?-+:?\s*)*\|?\s*$/.test(line));
+}
+
+function messageDrawing($: EngineInterface, e: RenderInput<'UserMessage' | 'AssistantMessage'>,
+  drawing: RenderElement, text: string, toggle: ButtonProps, status: string, retry?: ButtonProps): RenderElement {
+  const { Box, Button, Text } = $.ui.resolve(e);
+  // The native assistant body owns the full row. Keep its renderer intact.
+  const separate = e.component === 'AssistantMessage' || separateMessageControl(text);
+  const control = Box({ key: 'tail-' + toggle.key, marginLeft: 2, flexShrink: 0,
+    alignSelf: separate ? 'flex-start' : 'flex-end', children:
+    Button({ ...toggle, plain: true, hover: { bold: true },
+      // The host's message blue follows light, dark, and automatic themes
+      // on the drawing surface, including theme changes without a hook rerun.
+      children: Text({ color: 'briefLabelYou', underline: true, children: toggle.label }),
+    }),
+  });
+  return Box({ flexDirection: 'column', children: [
+    Box({ flexDirection: separate ? 'column' : 'row', flexWrap: 'wrap', children: [
+      separate ? drawing : Box({ flexShrink: 0, children: drawing }), control,
+    ] }),
+    ...(status ? [Box({ flexDirection: 'row', flexWrap: 'wrap', gap: 2, marginLeft: 2, children: [
+      Text({ dimColor: true, children: status }), ...(retry ? [Button({ ...retry, plain: true })] : []),
+    ] })] : []),
+  ] });
+}
+
+async function saveSetting($: EngineInterface, field: string, value: string | boolean) {
+  try {
+    if (field === 'base_url' && value) providerConfig(String(value), '_', '');
+    const result = await $.config.set({ key: $.plugin.name + '.' + field, value });
+    if (result.deny) await $.ui.toast(result.deny);
+    else $.ui.invalidate('ui.render');
+  } catch { await $.ui.toast('Settings were not saved. Check this field with /plugin configure.'); }
+}
+async function openSettings($: EngineInterface) {
+  await $.ui.open({ id: SETTINGS_PANE, title: 'Bilingual View settings', focus: true, closeOnEscape: true, rows: 22, columns: 64 });
+}
+async function loadModels($: EngineInterface, options: PluginOptions, listing: ModelListing) {
+  if (listing.loading) return;
+  listing.loading = true; listing.error = ''; $.ui.invalidate('ui.render');
+  try { listing.models = await fetchModels(hostIO($), options); }
+  catch (error) { listing.error = error instanceof Error ? error.message : 'Could not fetch models. You can still enter a model ID manually.'; }
+  finally { listing.loading = false; $.ui.invalidate('ui.render'); }
+}
+async function configureKey($: EngineInterface) {
+  const rows = await $.config.list();
+  const owner = rows.find(row => row.key === $.plugin.name + '.base_url')?.provider.plugin ?? $.plugin.name;
+  await $.ui.close({ id: SETTINGS_PANE });
+  // Sensitive userConfig fields have no config.set row. The host's existing
+  // configuration dialog owns their secure input and credential storage.
+  $.clock.after(0, async () => {
+    try { await $.command.run({ command: 'plugin', args: 'configure ' + owner }); }
+    catch { await $.ui.toast('Run /plugin configure ' + owner + ' to set the API key.'); }
+  });
+}
+async function checkProvider($: EngineInterface, options: PluginOptions) {
+  try {
+    await translate(hostIO($), options, 'This is a connection test.', 'zh');
+    await $.ui.toast('Translation Provider connection successful.');
+  } catch (error) { await $.ui.toast(error instanceof Error ? error.message : 'Connection test failed.'); }
+}
+
+async function questionRecord($: EngineInterface, state: State, options: PluginOptions, id: string, questions: Question[], discover: boolean): Promise<RecordEntry | null> {
+  const view = state.view;
+  if (!view.session) return null;
+  const ref: DisplayMessageRef = { kind: 'question', session: view.session, id: questionId(id), sources: [questionSource(questions)] };
+  const io = hostIO($);
+  let record = await displayRecord(io, state, ref);
+  if (state.view !== view) return null;
+  if (ready(record) || !discover && view.dialog !== ref.id) view.visible.delete(ref.id);
+  else if (discover) {
+    view.visible.set(ref.id, { kind: 'question', id: ref.id, text: ref.sources[0]! });
+    const result = await ensureTranslation(io, state, options, ref, false, () => state.view === view && enabled(options));
+    record = result.record ?? record;
+    if (result.status === 'skipped') {
+      view.visible.delete(ref.id);
+      if (!ready(record)) return null;
+    }
+  }
+  return record;
+}
+
+
+export const register: Register = (on, options) => {
+  const state = newState();
+  // Ephemeral UI data only. All settings are written through the host's userConfig.
+  const listing: ModelListing = { models: [], loading: false, error: '' };
+
+  on('session.start', async ($, e, next) => {
+    const session = await $.session.id();
+    if (state.session !== session) switchView(state, session);
+    await $.command.register({ name: 'bilingual-view', description: 'Translation settings, on/off controls, and connection test', argumentHint: '[status|settings|on|off|check]', immediate: true });
+    if (!state.pollStarted) {
+      state.pollStarted = true;
+      $.clock.every(1000, () => enabled(options) ? pollVisible(hostIO($), state, options) : undefined);
+    }
+    $.ui.invalidate('ui.render');
+    return next(e);
+  });
+
+  on('session.end', async ($, e, next) => {
+    switchView(state, '');
+    return next(e);
+  });
+
+  on('classic.SessionStart', async ($, e, next) => {
+    if (e.source === 'compact' && state.session === e.session_id) {
+      state.view.path = e.transcript_path;
+      state.view.historyStamp = undefined;
+    } else switchView(state, e.session_id, e.transcript_path);
+    const view = state.view;
+    $.clock.after(0, () => refreshHistory(hostIO($), state, view));
+    $.ui.invalidate('ui.render');
+    return next(e);
+  });
+
+  on('prompt.submit', async ($, e, next) => {
+    if (!enabled(options) || e.command) return next(e);
+    if (!await humanOrigin($, e.origin.kind) || /^\s*[!/]/.test(e.text) || !needsTranslation(e.text, 'en')) return next(e);
+    let translated: string;
+    try { translated = await translate(hostIO($), options, e.text, 'en', next.signal); }
+    catch (error) { return { drop: error instanceof Error ? error.message : 'Input translation failed; your message was not submitted.' }; }
+    aborted(next.signal);
+    const pending = { original: e.text, translated, session: state.session };
+    state.pending.push(pending);
+    const result = await next({ ...e, text: translated });
+    if (result.drop) state.pending = state.pending.filter(item => item !== pending);
+    return result;
+  }).catch(async ($, e, next) => {
+    // Do not silently submit Chinese when the translation hook fails.
+    if (next.called || !enabled(options)) return next(e);
+    return { drop: 'Input translation did not finish; your message was not submitted. Retry or check settings in /plugin.' };
+  });
+
+  on('turn.start', async ($, e, next) => {
+    state.activeTurn = e.turnId;
+    state.turns.set(e.turnId, { rows: [] });
+    return next(e);
+  });
+
+  on('turn.step', async function* ($, e, next) {
+    const turn = !e.agentId ? state.turns.get(e.turnId) : undefined;
+    if (turn) { turn.rows = []; turn.stepSeen = true; turn.stopReason = null; }
+    const result = yield* next(e);
+    if (turn) turn.stopReason = result.stopReason;
+    return result;
+  });
+
+  on('session.append', async ($, e, next) => {
+    if (e.agentId) return next(e);
+    if (e.door === 'prompt' && e.message.type === 'user' && await humanOrigin($, e.origin.kind) && !e.message.isMeta) {
+      // Pair the in-flight submission with the UUID Claude assigns here.
+      // Subsequent display/cache/task lookups use that UUID and role only.
+      const texts = textBlocks(e.message.content);
+      const index = state.pending.findIndex(item => item.session === state.session
+        && [texts.join(''), texts.join('\n'), texts.join('\n\n')].includes(item.translated));
+      if (index >= 0) {
+        const item = state.pending.splice(index, 1)[0]!;
+        await saveRecord(hostIO($), state, item.session, e.uuid, {
+          v: 1, kind: 'user', chineseSource: 'original', at: await $.clock.now(),
+          blocks: [{ source: item.translated, display: item.original, status: 'ready' }],
+        });
+      }
+    }
+    if (e.door === 'response' && e.message.type === 'assistant' && state.activeTurn) {
+      const turn = state.turns.get(state.activeTurn);
+      if (turn) {
+        const row = { id: e.uuid, texts: textBlocks(e.message.content), hasTools: e.message.content.some(b => b.type === 'tool_use') };
+        const index = turn.rows.findIndex(item => item.id === row.id);
+        if (index >= 0) turn.rows[index] = row;
+        else turn.rows.push(row);
+      }
+    }
+    // Observe only. In particular, never write the Chinese answer into content.
+    return next(e);
+  });
+
+  on('turn.complete', async ($, e, next) => {
+    if (e.agentId) return next(e);
+    const turn = state.turns.get(e.turnId);
+    const view = state.view;
+    state.turns.delete(e.turnId);
+    if (state.activeTurn === e.turnId) state.activeTurn = null;
+    const result = await next(e);
+    if (!enabled(options) || e.isAborted || e.reason === 'error' || !turn || !e.answer.trim()) return result;
+    const surfaces = await $.session.surfaces();
+    if (!surfaces.includes('terminal') && !surfaces.includes('desktop')) return result;
+    // turn.complete.answer may contain only the last block. A successful final
+    // request identifies all its text rows, including multi-block answers.
+    const blocks = turn.stepSeen
+      ? turn.stopReason === 'end_turn' && !turn.rows.some(row => row.hasTools)
+        ? turn.rows.flatMap(row => row.texts.filter(text => text.trim()).map(source => ({ id: row.id, source }))) : []
+      : finalBlocks(turn.rows, e.answer);
+    if (!blocks.length) {
+      if (needsDisplayTranslation(e.answer)) await $.ui.toast('The final message could not be identified. The original text is unchanged.');
+      return result;
+    }
+    const grouped = new Map<string, FinalAnswerRef>();
+    for (const block of blocks) {
+      if (!grouped.has(block.id)) grouped.set(block.id, { kind: 'assistant', id: block.id, sources: [], session: view.session });
+      grouped.get(block.id)!.sources.push(block.source);
+    }
+    for (const [id, ref] of grouped) {
+      if (state.view === view) view.finals.set(id, ref);
+      await ensureTranslation(hostIO($), state, options, ref);
+    }
+    if (state.view === view) $.ui.invalidate('ui.render');
+    return result;
+  });
+
+  on('ui.render', { component: 'UserMessage' }, async ($, e, next) => {
+    if (!enabled(options) || (e.surface !== 'terminal' && e.surface !== 'desktop')) return next(e);
+    const view = state.view;
+    if (!view.session) return next(e);
+    const { text, origin, onScreen } = e.props;
+    if (!onScreen) view.visible.delete(e.requestId);
+    if (e.props.task || e.props.from) {
+      view.visible.delete(e.requestId);
+      return next(e);
+    }
+    const io = hostIO($);
+    const ref: DisplayMessageRef = { kind: 'user', id: e.requestId, sources: [text], session: view.session };
+    let record = await displayRecord(io, state, ref);
+    if (state.view !== view) return next(e);
+    const source = record?.blocks[0]?.source ?? text;
+    if (/^\s*[!/]/.test(source)) {
+      view.visible.delete(ref.id);
+      return next(e);
+    }
+    // Legacy records themselves prove a user's input. An unstamped row with
+    // no record cannot be distinguished from an automatic notification.
+    if (!await humanOrigin($, origin.kind) && !(['unclassified', 'sdk'].includes(origin.kind) && record)) {
+      view.visible.delete(e.requestId);
+      return next(e);
+    }
+    if (state.view !== view) return next(e);
+    let needsChinese = needsDisplayTranslation(source);
+    if (ready(record) || !needsChinese) view.visible.delete(ref.id);
+    else if (onScreen) {
+      const visible = view.visible.get(ref.id);
+      if (visible?.kind !== 'user') {
+        view.visible.set(ref.id, { kind: 'user', id: ref.id, text: source });
+        // Only entering the visible range discovers work here. A toggle just
+        // redraws; the shared poller handles deferred admission and recovery.
+        const ensured = await ensureTranslation(io, state, options, ref, false,
+          () => state.view === view && view.visible.get(ref.id)?.kind === 'user');
+        record = ensured.record ?? record;
+        if (ensured.status === 'skipped') { needsChinese = false; view.visible.delete(ref.id); }
+      }
+    }
+    if (state.view !== view) return next(e);
+    const block = record?.blocks[0];
+    if (!block && (!needsChinese || !onScreen)) return next(e);
+    const key = 'user:' + ref.id;
+    const showSent = state.originals.has(key);
+    let display = !showSent && block?.status === 'ready' ? block.display : block?.source ?? text;
+    if (!showSent && block?.status === 'ready' && record?.chineseSource === 'translation' && block.display !== block.source) {
+      display = translatedChineseDisplay(block.display);
+    }
+    const drawing = await next({ ...e, props: { ...e.props, text: display } });
+    // Display equality only hides redundant controls; UUID reuse is unchanged.
+    if (ready(record) ? block?.display === block?.source : !needsChinese) return drawing;
+    const status = block?.status === 'ready'
+      ? ''
+      : block?.status === 'error' ? (block.error || 'Translation failed. Please retry.')
+      : state.output.jobs.get(memoryKey(ref.session, ref.id))?.status === 'running' ? 'Translating...' : 'Waiting for translation...';
+    return messageDrawing($, e, drawing, display,
+      { key: 'sent-' + key, label: showSent ? 'Show Chinese' : 'View sent text',
+        onPress: () => {
+          if (state.view !== view) return;
+          // A mounted button already has these contents. Reuse them when
+          // switching even if retention/LRU removed the backing entries.
+          // This is only the existing bounded memory cache, never a write
+          // to disk or a new translation job.
+          if (record) {
+            const cacheKey = memoryKey(ref.session, ready(record) ? ref.id : outputWorkKey(ref.id));
+            if (!state.records.get(cacheKey)) state.records.set(cacheKey, record);
+          }
+          if (state.originals.has(key)) state.originals.delete(key); else state.originals.add(key);
+          $.ui.invalidate('ui.render');
+        },
+      }, status,
+      block?.status === 'error' ? { key: 'retry-' + key, label: 'Retry translation',
+        onPress: async () => {
+          await ensureTranslation(io, state, options, ref, true, () => state.view === view);
+          if (state.view === view) $.ui.invalidate('ui.render');
+        },
+      } : undefined);
+  });
+
+  on('ui.render', { component: 'AssistantMessage' }, async ($, e, next) => {
+    if (!enabled(options) || (e.surface !== 'terminal' && e.surface !== 'desktop')) return next(e);
+    const view = state.view;
+    if (!view.session) return next(e);
+    if (e.props.onScreen === null) view.visible.delete(e.requestId);
+    else if (e.props.onScreen) view.visible.set(e.requestId, { kind: 'assistant', id: e.requestId, text: e.props.text });
+    const ref = await referenceFor(hostIO($), state, view, e.requestId);
+    if (!ref || state.view !== view) return next(e);
+    let record = await displayRecord(hostIO($), state, ref);
+    if (state.view !== view) return next(e);
+    let needsChinese = needsDisplayTranslation((record?.blocks.map(block => block.source) ?? ref.sources).join('\n\n'));
+    if (ready(record) || !needsChinese) view.visible.delete(e.requestId);
+    else if (e.props.onScreen) {
+      const ensured = await ensureTranslation(hostIO($), state, options, ref, false,
+        () => state.view === view && view.visible.get(ref.id)?.kind === 'assistant');
+      record = ensured.record ?? record;
+      if (ensured.status === 'skipped') { needsChinese = false; view.visible.delete(ref.id); }
+    }
+    if (state.view !== view) return next(e);
+    if (!record) return next(e);
+    const key = 'assistant:' + ref.id;
+    const showOriginal = state.originals.has(key);
+    const queued = state.output.jobs.get(memoryKey(ref.session, ref.id))?.status === 'queued';
+    // Read the entire saved message in order. Render text does not select or
+    // validate its contents, and all saved parts share this UUID's choice.
+    const original = record.blocks.map(block => block.source).join('\n\n');
+    const chinese = record.blocks.map(block => block.status === 'ready' ? block.display : block.source).join('\n\n');
+    // Adapt only translated display copies. Pending/unchanged blocks and the
+    // saved-text equality used to hide redundant controls stay untouched.
+    const display = showOriginal ? original : record.blocks.map(block => block.status === 'ready'
+      ? block.display === block.source ? block.display : translatedChineseDisplay(block.display)
+      : block.source).join('\n\n');
+    const needsWork = !ready(record) && needsChinese;
+    const error = record.blocks.find(block => block.status === 'error')?.error;
+    const status = !needsWork ? '' : record.blocks.some(block => block.status === 'error') ? error || 'Translation failed. Please retry.'
+      : queued ? 'Waiting for translation...' : 'Translating final answer...';
+    const drawing = await next({ ...e, props: { ...e.props, text: display } });
+    if (!needsWork && original === chinese) return drawing;
+    return messageDrawing($, e, drawing, display,
+      { key: 'original-' + key, label: showOriginal ? 'Show Chinese' : 'View original',
+        onPress: () => {
+          if (state.view !== view) return;
+          const cacheKey = memoryKey(ref.session, ready(record) ? ref.id : outputWorkKey(ref.id));
+          if (!state.records.get(cacheKey)) state.records.set(cacheKey, record);
+          if (state.originals.has(key)) state.originals.delete(key); else state.originals.add(key);
+          $.ui.invalidate('ui.render');
+        },
+      }, status,
+      needsWork && record.blocks.some(block => block.status === 'error') ? { key: 'retry-' + key, label: 'Retry translation',
+        onPress: async () => {
+          await ensureTranslation(hostIO($), state, options, ref, true, () => state.view === view);
+          if (state.view === view) $.ui.invalidate('ui.render');
+        },
+      } : undefined);
+  });
+
+  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+    const drawing = await next(e);
+    if (e.props.hasSurvey || (e.surface !== 'terminal' && e.surface !== 'desktop')) return drawing;
+    const { Box, Text, Button } = $.ui.resolve(e);
+    return Box({ flexDirection: 'column', children: [Box({ flexDirection: 'row', gap: 1, children: [
+      Text({ dimColor: true, children: 'Bilingual View' }),
+      Button({ key: 'bv-toggle', label: enabled(options) ? '\u25cf On' : '\u25cb Off', plain: true,
+        onPress: () => saveSetting($, 'enabled', !enabled(options)) }),
+      Button({ key: 'bv-settings', label: 'Settings', plain: true, onPress: () => openSettings($) }),
+    ] }), drawing] });
+  });
+
+  on('ui.render', { component: 'Pane', requestId: SETTINGS_PANE }, async ($, e, next) => {
+    if (e.surface !== 'terminal' && e.surface !== 'desktop') return next(e);
+    const config = await effectiveSettings(hostIO($), options);
+    const { Box, Text, Button, Input, Select } = $.ui.resolve(e);
+    const choices = [...new Set([config.model, ...listing.models].filter(Boolean))];
+    return Box({ flexDirection: 'column', gap: 1, children: [
+      Button({ key: 'bv-setting-toggle', label: config.enabled ? 'Translation: On' : 'Translation: Off',
+        onPress: () => saveSetting($, 'enabled', !config.enabled) }),
+      Text({ dimColor: true, children: 'When off, input is sent unchanged and messages show their original text.' }),
+      Input({ key: 'bv-base-url', label: 'Provider URL', value: config.baseUrl, submitLabel: 'Save',
+        onSubmit: value => saveSetting($, 'base_url', value.trim()) }),
+      Box({ flexDirection: 'row', gap: 1, children: [
+        Text({ children: 'API key: ' + (config.apiKey ? 'Set' : 'Not set') }),
+        Button({ key: 'bv-api-key', label: 'Set API key', onPress: () => configureKey($) }),
+      ] }),
+      ...(listing.models.length && choices.length ? [Select({ key: 'bv-model-select', label: 'Select model', value: config.model,
+        options: choices.map(value => ({ value, label: value })), onSelect: value => saveSetting($, 'model', value) })] : []),
+      Input({ key: 'bv-model', label: 'Model ID', value: config.model, submitLabel: 'Save',
+        onSubmit: value => saveSetting($, 'model', value.trim()) }),
+      Button({ key: 'bv-models', label: listing.loading ? 'Fetching models...' : 'Fetch models', onPress: () => loadModels($, options, listing) }),
+      Text({ dimColor: true, children: listing.error || (listing.models.length ? `Fetched ${listing.models.length} models. The list is kept only for this loaded instance.` : 'Fetch models on demand, or enter a model ID manually.') }),
+      Button({ key: 'bv-check', label: 'Test connection', onPress: () => checkProvider($, options) }),
+      Button({ key: 'bv-close', label: 'Close settings', onPress: () => $.ui.close({ id: SETTINGS_PANE }) }),
+    ] });
+  });
+
+  on('ui.render', { component: 'AskUserQuestion' }, async ($, e, next) => {
+    if (!enabled(options) || (e.surface !== 'terminal' && e.surface !== 'desktop')) return next(e);
+    const view = state.view;
+    const questions = e.props.questions as Question[];
+    view.dialog = questionId(e.requestId);
+    const record = await questionRecord($, state, options, e.requestId, questions, true);
+    if (state.view !== view) return next(e);
+    const drawing = await next({ ...e, props: { ...e.props, questions: drawQuestions(questions, record) } });
+    if (!record || ready(record)) return drawing;
+    const { Box, Text, Button } = $.ui.resolve(e);
+    const failed = record.blocks.some(block => block.status === 'error');
+    return Box({ flexDirection: 'column', children: [
+      Text({ dimColor: true, children: failed ? 'Question translation failed. You can still use the original text.' : 'Translating questions...' }),
+      ...(failed ? [Button({ key: 'bv-question-retry', label: 'Retry translation', onPress: async () => {
+        await ensureTranslation(hostIO($), state, options, { kind: 'question', session: view.session,
+          id: questionId(e.requestId), sources: [questionSource(questions)] }, true, () => state.view === view);
+        $.ui.invalidate('ui.render');
+      } })] : []), drawing,
+    ] });
+  });
+
+  on('tool.call', { tool: 'AskUserQuestion' }, async ($, e, next) => {
+    const view = state.view;
+    const result = await next(e);
+    view.visible.delete(questionId(e.tool_use_id));
+    if (view.dialog === questionId(e.tool_use_id)) view.dialog = undefined;
+    if (!enabled(options) || result.deny || result.isError || !result.result || !view.session) return result;
+    const io = hostIO($);
+    try {
+      const old = await readRecord(io, state, view.session, answerId(e.tool_use_id));
+      const changed = await translateAnswers(io, options, e.questions as Question[], result.result as QuestionResult, old, next.signal);
+      if (!changed.record) return result;
+      changed.record.at = await $.clock.now();
+      await saveRecord(io, state, view.session, answerId(e.tool_use_id), changed.record);
+      // Omit the host's old ref/text so it maps and stores the translated result.
+      return { result: changed.result, ...(result.context ? { context: result.context } : {}) };
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : 'Translation failed.';
+      await $.ui.toast('Typed answer not submitted: ' + reason);
+      return { deny: 'Translation of the typed answer failed; it was not submitted. Ask the user again.' };
+    }
+  });
+
+  on('ui.render', { component: 'ToolUse' }, async ($, e, next) => {
+    if (!enabled(options) || e.props.tool !== 'AskUserQuestion' || e.props.isErrored
+      || (e.surface !== 'terminal' && e.surface !== 'desktop')) return next(e);
+    const view = state.view, input = e.props.input as { questions?: Question[] } | undefined;
+    if (!Array.isArray(input?.questions)) return next(e);
+    const record = await questionRecord($, state, options, e.requestId, input.questions, !!e.props.onScreen);
+    const answer = view.session ? await readRecord(hostIO($), state, view.session, answerId(e.requestId)) : null;
+    if (state.view !== view) return next(e);
+    return next({ ...e, props: { ...e.props, input: { ...input, questions: drawQuestions(input.questions, record) },
+      ...(e.props.output && typeof e.props.output === 'object' ? { output: drawQuestionResult(e.props.output as QuestionResult, input.questions, record, answer) } : {}),
+    } });
+  });
+
+  on('ui.render', { component: 'ToolResult' }, async ($, e, next) => {
+    if (!enabled(options) || e.props.tool !== 'AskUserQuestion' || e.props.isErrored
+      || (e.surface !== 'terminal' && e.surface !== 'desktop')) return next(e);
+    const view = state.view, result = e.props.output as QuestionResult;
+    if (!result || !Array.isArray(result.questions)) return next(e);
+    const record = await questionRecord($, state, options, e.requestId, result.questions, !!e.props.onScreen);
+    const answer = view.session ? await readRecord(hostIO($), state, view.session, answerId(e.requestId)) : null;
+    if (state.view !== view) return next(e);
+    return next({ ...e, props: { ...e.props, output: drawQuestionResult(result, result.questions, record, answer) } });
+  });
+
+  on('command.run', { command: 'bilingual-view' }, async ($, e) => {
+    const arg = e.args.trim().toLowerCase();
+    if (arg === 'settings') await openSettings($);
+    else if (arg === 'on' || arg === 'off') await saveSetting($, 'enabled', arg === 'on');
+    else if (arg === 'check') await checkProvider($, options);
+    else {
+      const config = await effectiveSettings(hostIO($), options);
+      await $.ui.toast(`Translation ${config.enabled ? 'On' : 'Off'}; Provider: ${config.baseUrl || 'Not set'}; Model: ${config.model || 'Not set'}; API key: ${config.apiKey ? 'Set' : 'Not set'}. Settings: /bilingual-view settings`);
+    }
+    // Returning command text would add it to model context. Use UI-only toasts.
+    return {};
+  });
+};

@@ -1,0 +1,33 @@
+{
+  "name": "bilingual-view",
+  "displayName": "Bilingual View",
+  "version": "0.7.4",
+  "description": "Translate Chinese prompts and typed question answers into English; display Chinese messages and question dialogs with shared host settings.",
+  "author": {
+    "name": "Bilingual View contributors"
+  },
+  "userConfig": {
+    "base_url": {
+      "type": "string",
+      "title": "Translation Provider URL",
+      "description": "OpenAI compatible Chat Completions base URL, including /v1 or another prefix, or the full /chat/completions endpoint. Messages that require input translation remain unsubmitted until configured."
+    },
+    "model": {
+      "type": "string",
+      "title": "Translation model",
+      "description": "Model ID from this Provider. Translation does not change the model used by the Claude conversation."
+    },
+    "api_key": {
+      "type": "string",
+      "title": "Translation Provider API key",
+      "description": "Sent as an Authorization: Bearer header only to the configured URL. Leave blank for a local service without authentication.",
+      "sensitive": true
+    },
+    "enabled": {
+      "type": "boolean",
+      "title": "Translation enabled",
+      "description": "When enabled, Chinese input is submitted in English and messages can display Chinese. When disabled, input and display remain unchanged.",
+      "default": true
+    }
+  }
+}
