@@ -1,7 +1,7 @@
 {
-  "name": "bilingual-view-local",
+  "name": "bilingual-view",
   "metadata": {
-    "description": "Local installation source for the Bilingual View translation mod."
+    "description": "Marketplace for the Bilingual View translation mod for Claude Code."
   },
   "owner": {
     "name": "Bilingual View contributors"

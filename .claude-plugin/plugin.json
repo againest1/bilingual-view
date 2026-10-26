@@ -1,8 +1,9 @@
 {
   "name": "bilingual-view",
   "displayName": "Bilingual View",
-  "version": "0.7.4",
   "description": "Translate Chinese prompts and typed question answers into English; display Chinese messages and question dialogs with shared host settings.",
+  "homepage": "https://github.com/againest1/bilingual-view#readme",
+  "repository": "https://github.com/againest1/bilingual-view",
   "author": {
     "name": "Bilingual View contributors"
   },
