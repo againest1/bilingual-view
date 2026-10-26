@@ -79,20 +79,13 @@ Bilingual View 让你用中文输入和阅读，同时将支持的用户输入�
 
 ## 安装
 
-### Marketplace 安装
+### Marketplace 方式
 
 在系统终端运行以下命令，将插件安装到当前用户范围：
 
 ```sh
 claude plugin marketplace add againest1/bilingual-view
-claude plugin install bilingual-view@bilingual-view --scope user
-```
-
-也可以在 Claude Code 交互式终端会话中依次运行，并在安装界面选择用户范围（user）：
-
-```text
-/plugin marketplace add againest1/bilingual-view
-/plugin install bilingual-view@bilingual-view
+claude plugin install bilingual-view@bilingual-view
 ```
 
 安装后启动新的 Claude Code 会话；已打开的终端会话也可以运行 `/reload-plugins`。输入框上方出现 **Bilingual View** 设置栏后，按[配置](#配置)填写翻译服务。
@@ -110,25 +103,23 @@ cp -R .claude-plugin hooks "$HOME/.claude/skills/bilingual-view/"
 
 ## 更新与卸载
 
-### Marketplace 安装
-
-以下命令在系统终端运行。插件更新和卸载命令中的 `--scope user` 对应上文的用户范围安装；若插件安装在项目或本地范围，请分别改为 `--scope project` 或 `--scope local`。
+### Marketplace 方式
 
 更新市场目录并更新插件：
 
 ```sh
 claude plugin marketplace update bilingual-view
-claude plugin update bilingual-view@bilingual-view --scope user
+claude plugin update bilingual-view@bilingual-view
 ```
 
-本项目按 Git 提交提供更新。更新后启动新会话，或在已打开的终端会话中运行 `/reload-plugins`。Marketplace 更新后旧版本的中文缓存目前不会自动沿用，详见[数据与翻译缓存](#数据与翻译缓存)。
+本项目按 Git 提交提供更新。更新后启动新会话，或在已打开的终端会话中运行 `/reload-plugins`。
 
 如需自动更新，在 `/plugin` 的 **Marketplaces** 页面选择 **bilingual-view**，再启用 **Enable auto-update**；第三方市场默认不自动更新。
 
 卸载插件：
 
 ```sh
-claude plugin uninstall bilingual-view@bilingual-view --scope user
+claude plugin uninstall bilingual-view@bilingual-view
 ```
 
 卸载后启动新会话，或在已打开的终端会话中运行 `/reload-plugins`。卸载不会删除 Claude 的会话历史。
@@ -136,12 +127,12 @@ claude plugin uninstall bilingual-view@bilingual-view --scope user
 如果也不再需要这个市场源，可以继续移除上文添加到用户范围的市场源：
 
 ```sh
-claude plugin marketplace remove bilingual-view --scope user
+claude plugin marketplace remove bilingual-view
 ```
 
 更多命令用法见 [Claude Code 插件命令参考](https://code.claude.com/docs/en/plugins/cli-reference)。
 
-### 手动安装
+### 手动方式
 
 更新时，将新版 `.claude-plugin` 和 `hooks` 目录复制到现有安装目录，然后启动新会话。如需保留已保存的中文内容，请保留 `cache/`。
 
