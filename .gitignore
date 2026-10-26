@@ -9,5 +9,6 @@
 cache/
 .DS_Store
 /AGENTS.md
+/AGENTS.override.md
 /docs/
 /tests/

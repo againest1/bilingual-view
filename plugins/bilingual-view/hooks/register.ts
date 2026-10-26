@@ -224,9 +224,29 @@ export const register: Register = (on, configuredOptions) => {
   on('prompt.submit', async ($, e, next) => {
     if (!enabled(options) || e.command) return next(e);
     if (!await humanOrigin($, e.origin.kind) || /^\s*[!/]/.test(e.text) || !needsTranslation(e.text, 'en')) return next(e);
+    const view = state.view;
+    const input = { visible: false };
+    view.inputTranslations.add(input);
+    const clearStatus = () => {
+      if (view.inputTranslations.delete(input) && input.visible && state.view === view) $.ui.invalidate('ui.render');
+    };
     let translated: string;
-    try { translated = await translate(hostIO($), options, e.text, 'en', next.signal); }
+    try {
+      next.signal?.addEventListener('abort', clearStatus, { once: true });
+      // Input has no message UUID until submission; show progress above the
+      // composer, and avoid flashing a status for fast translations.
+      $.clock.after(300, () => {
+        if (state.view !== view || !view.inputTranslations.has(input)) return;
+        input.visible = true;
+        $.ui.invalidate('ui.render');
+      });
+      translated = await translate(hostIO($), options, e.text, 'en', next.signal);
+    }
     catch (error) { return { drop: error instanceof Error ? error.message : 'Input translation failed; your message was not submitted.' }; }
+    finally {
+      next.signal?.removeEventListener('abort', clearStatus);
+      clearStatus();
+    }
     aborted(next.signal);
     const pending = { original: e.text, translated, session: state.session };
     state.pending.push(pending);
@@ -455,11 +475,13 @@ export const register: Register = (on, configuredOptions) => {
     const drawing = await next(e);
     if (e.props.hasSurvey || (e.surface !== 'terminal' && e.surface !== 'desktop')) return drawing;
     const { Box, Text, Button } = $.ui.resolve(e);
-    return Box({ flexDirection: 'column', children: [Box({ flexDirection: 'row', gap: 1, children: [
+    return Box({ flexDirection: 'column', children: [Box({ flexDirection: 'row', flexWrap: 'wrap', gap: 1, children: [
       Text({ dimColor: true, children: 'Bilingual View' }),
       Button({ key: 'bv-toggle', label: enabled(options) ? '\u25cf On' : '\u25cb Off', plain: true,
         onPress: () => saveSetting($, 'enabled', !enabled(options)) }),
       Button({ key: 'bv-settings', label: 'Settings', plain: true, onPress: () => openSettings($) }),
+      ...([...state.view.inputTranslations].some(input => input.visible)
+        ? [Text({ dimColor: true, children: 'Translating to English...' })] : []),
     ] }), drawing] });
   });
 

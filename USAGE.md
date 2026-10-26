@@ -1,8 +1,10 @@
 # Bilingual View 使用指南
 
-本页提供完整的安装、配置、翻译规则和维护说明。首次使用请从 [README 的快速开始](README.md#快速开始)入手。
+用中文输入，译好后发送，再用中文阅读和核对回答。本指南带你完成一轮双语对话，并说明翻译失败时如何继续。
 
-[安装](#安装) · [配置](#配置) · [日常操作](#使用与操作) · [输入翻译](#输入翻译范围) · [中文显示](#中文显示范围) · [翻译失败](#翻译失败时的处理) · [数据与缓存](#数据与翻译缓存) · [更新与卸载](#更新与卸载) · [常见问题](#常见问题)
+如果已经完成 [README 的快速开始](README.md#快速开始)，可以直接跳到[发送中文提示词](#发送中文提示词)。
+
+[安装与配置](#安装) · [日常使用](#使用与操作) · [失败与重试](#翻译失败时的处理) · [翻译范围](#输入翻译范围) · [常见问题](#常见问题) · [数据与缓存](#数据与翻译缓存) · [更新与卸载](#更新与卸载) · [命令速查](#bilingual-view-命令)
 
 ## 使用要求
 
@@ -13,8 +15,6 @@
 
 ## 安装
 
-### Marketplace 方式
-
 在系统终端运行以下命令，将插件安装到当前用户范围：
 
 ```sh
@@ -22,54 +22,72 @@ claude plugin marketplace add againest1/bilingual-view
 claude plugin install bilingual-view@bilingual-view
 ```
 
-安装后启动新的 Claude Code 会话；已打开的终端会话也可以运行 `/reload-plugins`。输入框上方出现 **Bilingual View** 设置栏后，按[配置](#配置)填写翻译服务。
+安装后启动新的 Claude Code 会话；已打开的终端会话也可以运行 `/reload-plugins`。输入框上方出现 **Bilingual View** 设置栏后，即可继续配置。设置栏中有 **On/Off（开启/关闭）** 按钮和 **Settings（设置）**。
 
-### 手动安装
-
-从 [GitHub 仓库](https://github.com/againest1/bilingual-view)下载并解压 Bilingual View，或复制本项目目录。在包含 `plugins` 的项目根目录中运行：
-
-```sh
-mkdir -p "$HOME/.claude/skills/bilingual-view"
-cp -R plugins/bilingual-view/.claude-plugin plugins/bilingual-view/hooks "$HOME/.claude/skills/bilingual-view/"
-```
-
-启动新的 Claude Code 会话。Mod 会从该目录自动加载，无需注册到插件市场。输入框上方会显示 **Bilingual View**、**On/Off（开启/关闭）** 按钮和 **Settings（设置）**。
+不通过 Marketplace 安装时，可按[手动安装](#手动安装)操作，再回到下一节配置。
 
 ## 配置
 
-点击输入框上方的 **Settings（设置）**，或运行：
+### 填写翻译服务
 
-```text
-/bilingual-view settings
-```
+点击输入框上方的 **Settings（设置）**，或运行 `/bilingual-view settings`。先填写服务地址、密钥和翻译模型：
 
 | 设置项 | 填写说明 |
 | --- | --- |
 | Provider URL（服务地址） | 填写基础 URL，例如 `https://provider.example/v1`，并包含服务要求的路径前缀。支持 HTTP 和 HTTPS。 |
-| API key（API 密钥） | 输入密钥并按 **Enter** 保存，成功后立即用于当前会话。服务无需身份验证时可不填。 |
+| API key（API 密钥） | 输入密钥并按 **Enter** 保存，成功后立即用于当前会话。输入时文本可见；服务无需身份验证时可不填。 |
 | Model ID（模型标识） | 输入翻译模型的标识，或点击 **Fetch models（获取模型列表）** 后选择。这不会改变 Claude 会话使用的模型。 |
 | Translation（翻译） | 开启或关闭翻译，默认开启。 |
 
-也可以填写完整的 `/chat/completions` URL。**不要**将 `/models` 地址填入 Provider URL：例如，应填写 `http://provider.example/v1`，而不是 `http://provider.example/v1/models`。
+需要翻译的文本会发送到你配置的服务。密钥由 Claude 保存，中文原文和译文保存在本机；详见[数据与翻译缓存](#数据与翻译缓存)。
 
-模型列表仅在手动请求时获取，不会自动刷新，也不会在 Mod 重新加载后保留。如果服务不提供模型列表接口，可以手动填写 Model ID。
+Provider URL 也可以填写完整的 `/chat/completions` 地址，**不要填写 `/models` 地址**。模型列表不可用时，直接填写 Model ID 即可。
 
-密钥输入时文本可见。保存成功后，输入框清空并显示 **Set（已设置）**。更换密钥时输入新值并再次保存；留空提交不会清除或更改已有密钥。
+### 测试连接
 
-若提示密钥无法保存，可运行 `/plugin`，选择本插件的 **Configure（配置）** 填写。
+点击 **Test connection（测试连接）**，或运行 `/bilingual-view check`。它会向你配置的翻译服务发送示例翻译请求，不会成为 Claude 会话中的消息。
 
-点击 **Test connection（测试连接）** 或运行 `/bilingual-view check` 可发送示例翻译请求。该示例不会成为 Claude 会话中的消息。
+示例翻译成功后，就可以开始发送中文提示词。如果失败，先检查服务地址、密钥和模型，再测试一次。
+
+<details>
+<summary><strong>模型列表刷新与密钥保存说明</strong></summary>
+
+模型列表仅在点击 **Fetch models（获取模型列表）** 时获取，不会自动刷新，也不会在 Mod 重新加载后保留。
+
+密钥保存成功后，输入框清空并显示 **Set（已设置）**。更换密钥时输入新值并再次保存；留空提交不会清除或更改已有密钥。若提示密钥无法保存，可运行 `/plugin`，选择本插件的 **Configure（配置）** 填写。
+
+</details>
 
 ## 使用与操作
 
+### 发送中文提示词
+
+确认设置栏为 **On（开启）**，像平常一样输入普通中文提示词。例如，发送 `解释这段代码` 后：
+
+1. Bilingual View 先将提示词翻成英文，例如 `Explain this code.`。
+2. 翻译成功并通过检查后，英文译文才会提交给 Claude。
+3. 界面保留你输入的 `解释这段代码`，方便继续用中文阅读。
+
+实际译文由你选择的翻译模型决定。**这就是「译好再发送」：失败时本次输入不会提交，也不会自动改发中文原文。** 你可以修正设置或重试，具体见[发送前的翻译检查](#发送前的翻译检查)。
+
+翻译超过约 **0.3 秒** 时，设置栏会显示 **Translating to English...（正在翻译为英文）**，表示提示词尚未发送给 Claude。快速完成的翻译不会显示此提示；提示出现前也可能正在翻译。翻译完成、失败或取消后，提示会消失。
+
 ### 查看已发送文本和原始回答
+
+Claude 给出符合[中文显示范围](#中文显示范围)的英文最终回答后，Bilingual View 会生成中文译文供你阅读。要核对措辞，可以随时切换：
 
 | 消息类型 | 切换到已发送文本或原文 | 切换回中文 |
 | --- | --- | --- |
 | 用户提示词 | **View sent text（查看已发送文本）** | **Show Chinese（显示中文）** |
 | Claude 的最终回答 | **View original（查看原文）** | **Show Chinese（显示中文）** |
 
-这些控件位于已翻译用户消息的旁边或下方，以及最终回答的下方。使用 **View sent text（查看已发送文本）** 可核对普通提示词实际提交的版本，包括其中保留的中文。此操作查看的是已经发送的消息，提交前没有译文预览。斜杠命令会直接传递，不显示这些用户消息翻译控件。
+这些控件位于已翻译用户消息的旁边或下方，以及已翻译最终回答的下方。**View sent text（查看已发送文本）** 展示实际提交的版本，包括其中按规则保留的中文；它查看的是已经发送的消息，提交前没有译文预览。斜杠命令会直接传递，不显示这些用户消息翻译控件。
+
+### 在提问对话框中回答
+
+Claude 通过 `AskUserQuestion` 提问时，问题和选项描述可显示中文译文。选项标签保留原始值，标签的译文放在描述中，方便对照。
+
+直接选择选项，会提交选项的原始值；自行输入中文回答，则会先翻译并检查，再提交英文译文。如果同时选择选项并补充文字，只翻译自行输入的部分。翻译失败时，该回答不会提交，Claude 会收到失败通知并被要求重新提问。
 
 ### 开启或关闭翻译
 
@@ -77,17 +95,31 @@ cp -R plugins/bilingual-view/.claude-plugin plugins/bilingual-view/hooks "$HOME/
 
 **关闭翻译后，中文输入会按原样提交。** 消息也会显示原文。重新开启翻译后，后续输入和界面显示恢复正常翻译行为，但已发送给 Claude 的中文不会被补译。
 
-### Bilingual View 命令
+## 翻译失败时的处理
 
-| 命令 | 功能 |
-| --- | --- |
-| `/bilingual-view` 或 `/bilingual-view status` | 显示当前翻译设置，不显示 API 密钥。 |
-| `/bilingual-view settings` | 打开设置。 |
-| `/bilingual-view on` | 开启翻译。 |
-| `/bilingual-view off` | 关闭翻译。 |
-| `/bilingual-view check` | 发送示例翻译请求并报告结果。 |
+### 发送前的翻译检查
 
-上表中的命令用于控制本 Mod。其他命令的翻译行为见[不会翻译的输入](#不会翻译的输入)。
+「译好再发送」适用于**翻译开启时，需要翻译的中文提示词和 `AskUserQuestion` 中自行输入的中文回答**。只有翻译成功、译文通过检查，输入才会提交。以下情况都会停止提交：
+
+- 尚未配置翻译服务。
+- 翻译请求失败，或译文未通过保留文本检查。
+- 译文中本应翻成英文的自然语言部分仍含中文。
+
+检查允许代码、路径等[保留文本](#翻译时保持原样的文本)包含中文。命令、选中的选项等[原样提交的输入](#不会翻译的输入)不经过翻译，也不受这项检查限制。
+
+如果翻译服务改动或遗漏了应保留的文本，Bilingual View 会针对受影响的部分自动发起一次纠正请求。纠正仍失败时会报告问题，不会无限重试。
+
+### 失败后如何继续
+
+先运行 `/bilingual-view check` 检查 URL、密钥和模型。请使用能直接返回译文的模型；如果译文仍有本应翻译的中文，可以重试或更换翻译模型。
+
+| 失败发生在哪里 | 消息状态 | 接下来怎么做 |
+| --- | --- | --- |
+| 发送普通中文提示词时 | 本次提示词未发送给 Claude。 | 修正设置后重新发送，或重试。 |
+| 在 `AskUserQuestion` 中自行输入回答时 | 该回答未提交；Claude 会收到失败通知，并被要求重新提问。 | 修正设置后，在重新出现的提问中作答。 |
+| 阅读中文译文时 | 原文仍可阅读；Claude 已生成的回答不受影响。 | 点击 **Retry translation（重试翻译）**。 |
+
+如果决定暂时关闭翻译，**关闭后重新发送的中文会原样提交给 Claude**，后续开启翻译也不会补译这次输入。
 
 ## 输入翻译范围
 
@@ -104,13 +136,7 @@ cp -R plugins/bilingual-view/.claude-plugin plugins/bilingual-view/hooks "$HOME/
 
 如果输入中除保留文本外没有中文自然语言内容，则直接按原样提交，不发起翻译请求。
 
-对于上述需要翻译的输入，Mod 会执行**提交前的翻译检查**：只有翻译成功且译文通过检查，才会将译文提交给 Claude。以下任一情况都会阻止提交：
-
-- 尚未配置翻译服务。
-- 翻译失败。
-- **翻译服务返回的译文**中，本应翻成英文的自然语言部分仍含有中文。
-
-其中，中文残留检查针对的是翻译后的译文；代码、路径等文本按规则保留，其中的中文不计入检查。下文列出的绕过翻译的输入不受此检查限制。
+需要翻译的输入会经过[发送前的翻译检查](#发送前的翻译检查)；检查针对译文，按规则保留的中文不计入中文残留检查。
 
 ### 不会翻译的输入
 
@@ -157,15 +183,47 @@ cp -R plugins/bilingual-view/.claude-plugin plugins/bilingual-view/hooks "$HOME/
 
 用户消息和最终回答优先显示已保存的中文。如果没有已保存的中文，且自然语言部分已含中文，则直接显示，包括中英混合消息；其余英文不会自动翻译。语言检查不包含保留文本。`AskUserQuestion` 对话框中的英文字段则可以单独翻译，即使其他字段已经包含中文。
 
-## 翻译失败时的处理
+## 常见问题
 
-| 失败情况 | 处理方式 |
-| --- | --- |
-| 受支持的提示词在提交前无法完成翻译 | 提示词不会发送。请修正翻译服务设置或重试。 |
-| 在 `AskUserQuestion` 中自行输入的回答无法完成翻译 | 该回答不会提交。Claude 会收到翻译失败的通知，并被要求重新提问。 |
-| 用于显示的翻译失败 | 仍可阅读原文。点击 **Retry translation（重试翻译）** 可再次尝试；Claude 已生成的回答不受影响。 |
+<details>
+<summary><strong>安装后看不到设置栏</strong></summary>
 
-如果翻译服务改动或遗漏了应保留的文本，Mod 会针对受影响的部分自动发起一次纠正请求。如果纠正仍失败，则报告问题，不会无限重试。绕过翻译的输入不会被这些翻译检查拦截。
+先确认使用的 Claude 宿主支持 Mods，再按安装方式检查：
+
+- **Marketplace 安装：** 在 `/plugin` 的 **Installed** 页面确认 `bilingual-view@bilingual-view` 已安装并启用，然后启动新会话，或在终端会话中运行 `/reload-plugins`。
+- **手动安装：** 检查 `.claude-plugin` 和 `hooks` 是否直接位于 `~/.claude/skills/bilingual-view/` 下，然后启动新会话。
+
+</details>
+
+<details>
+<summary><strong>获取模型列表时返回 HTTP 404</strong></summary>
+
+检查 Provider URL 是否以 API 基础路径（如 `/v1`）或 `/chat/completions` 结尾。如果服务不提供 `/models` 接口，请手动填写 Model ID，再运行 `/bilingual-view check` 测试翻译。
+
+</details>
+
+<details>
+<summary><strong>开启翻译后，Claude 为什么还会收到中文？</strong></summary>
+
+这项检查只覆盖需要翻译的输入。命令参数、保留文本、`AskUserQuestion` 中选中的选项，以及已有历史、文件等上下文，仍可能包含中文。关闭翻译时，中文输入也会原样提交。完整规则见[输入翻译范围](#输入翻译范围)。
+
+绕过翻译的输入不会显示翻译失败提示；已翻译的普通提示词可用 **View sent text（查看已发送文本）** 核对。
+
+</details>
+
+<details>
+<summary><strong>回答或较早的消息没有显示中文译文</strong></summary>
+
+先确认翻译处于 **On（开启）** 状态。中英混合的自然语言文本直接显示，思考过程、中间回复和普通工具结果不翻译，详见[中文显示范围](#中文显示范围)。如果已经出现翻译失败提示，可点击 **Retry translation（重试翻译）**。
+
+</details>
+
+<details>
+<summary><strong>恢复会话后找不到最初输入的中文措辞</strong></summary>
+
+缓存可能已被删除、因达到容量上限而移除较早的记录，或未能成功保存。重新生成的显示译文无法还原你当时输入的准确措辞。保存位置和限制见[数据与翻译缓存](#数据与翻译缓存)。
+
+</details>
 
 ## 数据与翻译缓存
 
@@ -176,6 +234,17 @@ cp -R plugins/bilingual-view/.claude-plugin plugins/bilingual-view/hooks "$HOME/
 每个会话的缓存最多占用 4 MiB；缓存文件达到上限时，较早的记录可能被移除。卸载插件会保留缓存，需要删除时请按[清理翻译缓存](#清理翻译缓存)操作。删除缓存也会删除已保存的译文和中文原文；后续重新翻译无法还原你最初输入的准确措辞。
 
 同一会话请勿同时在多个 Claude Code 实例中使用，以免丢失已保存的中文文本。
+
+## 手动安装
+
+从 [GitHub 仓库](https://github.com/againest1/bilingual-view)下载并解压 Bilingual View，或复制本项目目录。在包含 `plugins` 的项目根目录中运行：
+
+```sh
+mkdir -p "$HOME/.claude/skills/bilingual-view"
+cp -R plugins/bilingual-view/.claude-plugin plugins/bilingual-view/hooks "$HOME/.claude/skills/bilingual-view/"
+```
+
+启动新的 Claude Code 会话。Mod 会从该目录自动加载，无需注册到插件市场。看到输入框上方的 **Bilingual View** 设置栏后，按[配置](#配置)填写翻译服务，即可开始使用。
 
 ## 更新与卸载
 
@@ -224,11 +293,14 @@ rm -rf "$HOME/.claude/bilingual-view/cache/"
 
 这会删除所有会话的翻译缓存；重新翻译无法还原你最初输入的准确中文措辞。
 
-## 常见问题
+## Bilingual View 命令
 
-- **看不到设置栏：** Marketplace 安装用户可在 `/plugin` 的 **Installed** 页面确认 `bilingual-view@bilingual-view` 已安装并启用，然后启动新会话，或在终端会话中运行 `/reload-plugins`。手动安装用户请检查 `.claude-plugin` 和 `hooks` 是否直接位于 `~/.claude/skills/bilingual-view/` 下，然后启动新会话。使用的 Claude 宿主必须支持 Mods。
-- **获取模型列表时返回 HTTP 404：** 检查 Provider URL 是否以 API 基础路径（如 `/v1`）或 `/chat/completions` 结尾。如果服务不提供 `/models` 接口，请手动填写 Model ID。
-- **翻译失败：** 使用 `/bilingual-view check` 检查 URL、密钥和模型。请使用能直接返回译文的模型，然后重试。
-- **Claude 收到了中文：** 请查看[输入翻译范围](#输入翻译范围)。命令参数、保留文本、`AskUserQuestion` 中选中的选项、关闭翻译时的输入，以及其他会话上下文，都可能包含中文。绕过翻译的输入不会显示翻译失败提示。
-- **回答或较早的消息没有显示中文译文：** 检查翻译是否处于 On（开启）状态，以及内容是否属于[中文显示范围](#中文显示范围)。中英混合的自然语言文本会直接显示，思考过程、中间回复和普通工具结果不会被翻译。
-- **恢复会话后找不到最初输入的中文措辞：** 缓存可能已被删除、清理，或未能成功保存。重新生成的显示译文无法还原你当时输入的准确措辞。
+| 命令 | 功能 |
+| --- | --- |
+| `/bilingual-view` 或 `/bilingual-view status` | 显示当前翻译设置，不显示 API 密钥。 |
+| `/bilingual-view settings` | 打开设置。 |
+| `/bilingual-view on` | 开启翻译。 |
+| `/bilingual-view off` | 关闭翻译。 |
+| `/bilingual-view check` | 发送示例翻译请求并报告结果。 |
+
+上表中的命令用于控制本 Mod。其他命令的翻译行为见[不会翻译的输入](#不会翻译的输入)。
