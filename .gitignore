@@ -1,4 +1,4 @@
-.claude-plugin/types/
+**/.claude-plugin/types/
 .claude/
 .env
 .env.*
@@ -8,3 +8,6 @@
 *.local.json
 cache/
 .DS_Store
+/AGENTS.md
+/docs/
+/tests/

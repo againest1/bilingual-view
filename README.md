@@ -92,11 +92,11 @@ claude plugin install bilingual-view@bilingual-view
 
 ### 手动安装
 
-从 [GitHub 仓库](https://github.com/againest1/bilingual-view)下载并解压 Bilingual View，或复制本项目目录。在包含 `.claude-plugin` 和 `hooks` 的目录中运行：
+从 [GitHub 仓库](https://github.com/againest1/bilingual-view)下载并解压 Bilingual View，或复制本项目目录。在包含 `plugins` 的项目根目录中运行：
 
 ```sh
 mkdir -p "$HOME/.claude/skills/bilingual-view"
-cp -R .claude-plugin hooks "$HOME/.claude/skills/bilingual-view/"
+cp -R plugins/bilingual-view/.claude-plugin plugins/bilingual-view/hooks "$HOME/.claude/skills/bilingual-view/"
 ```
 
 启动新的 Claude Code 会话。Mod 会从该目录自动加载，无需注册到插件市场。输入框上方会显示 **Bilingual View**、**On/Off（开启/关闭）** 按钮和 **Settings（设置）**。
@@ -134,7 +134,7 @@ claude plugin marketplace remove bilingual-view
 
 ### 手动方式
 
-更新时，将新版 `.claude-plugin` 和 `hooks` 目录复制到现有安装目录，然后启动新会话。翻译缓存保存在独立目录中，不受更新影响。
+更新时，将新版 `plugins/bilingual-view/` 下的 `.claude-plugin` 和 `hooks` 目录复制到现有安装目录，然后启动新会话。翻译缓存保存在独立目录中，不受更新影响。
 
 卸载时，删除 `~/.claude/skills/bilingual-view/` 并启动新会话。需要同时删除中文原文和译文时，再按下文[清理翻译缓存](#清理翻译缓存)删除缓存目录。Claude 的会话历史不受影响。
 

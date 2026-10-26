@@ -9,7 +9,7 @@
   "plugins": [
     {
       "name": "bilingual-view",
-      "source": "./",
+      "source": "./plugins/bilingual-view",
       "description": "English submission of Chinese input, Chinese message and question displays, shared host settings, on/off controls, and an on-demand model list for CLI and Desktop Code."
     }
   ]
