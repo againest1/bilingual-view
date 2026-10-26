@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="304" viewBox="0 0 900 304" role="img" aria-labelledby="title desc">
+  <title id="title">Bilingual View 翻译流程示意</title>
+  <desc id="desc">普通中文提示词翻译成英文后提交给 Claude；符合翻译条件的英文最终回答翻译成中文供你阅读。原文和已发送文本均可查看。</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#64748b"/>
+    </marker>
+  </defs>
+  <style>
+    text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans CJK SC", "PingFang SC", "Microsoft YaHei", sans-serif; }
+    .background { fill: #f6f8fa; stroke: #d8dee4; }
+    .card { fill: #ffffff; stroke: #d8dee4; }
+    .heading { fill: #24292f; font-size: 20px; font-weight: 600; }
+    .body { fill: #24292f; font-size: 21px; }
+    .label { fill: #57606a; font-size: 14px; }
+    .input { fill: #0969da; }
+    .answer { fill: #1a7f37; }
+    @media (prefers-color-scheme: dark) {
+      .background { fill: #161b22; stroke: #30363d; }
+      .card { fill: #0d1117; stroke: #30363d; }
+      .heading, .body { fill: #e6edf3; }
+      .label { fill: #8b949e; }
+      .input { fill: #58a6ff; }
+      .answer { fill: #3fb950; }
+    }
+  </style>
+  <rect class="background" x="1" y="1" width="898" height="302" rx="16"/>
+  <text class="heading" x="36" y="43">你输入和阅读的内容</text>
+  <text class="heading" x="530" y="43">Claude 会话中的内容</text>
+  <rect class="card" x="28" y="64" width="342" height="90" rx="10"/>
+  <rect class="card" x="522" y="64" width="350" height="90" rx="10"/>
+  <text class="label input" x="48" y="91">中文提示词</text>
+  <text class="body" x="48" y="128">解释这段代码</text>
+  <text class="label input" x="542" y="91">已发送文本</text>
+  <text class="body" x="542" y="128">Explain this code.</text>
+  <text class="label" x="446" y="98" text-anchor="middle">译为英文</text>
+  <path d="M 390 117 H 500" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)"/>
+  <rect class="card" x="28" y="186" width="342" height="90" rx="10"/>
+  <rect class="card" x="522" y="186" width="350" height="90" rx="10"/>
+  <text class="label answer" x="48" y="213">中文显示</text>
+  <text class="body" x="48" y="250">这个函数会读取配置。</text>
+  <text class="label answer" x="542" y="213">原始最终回答</text>
+  <text class="body" x="542" y="250">This function reads the config.</text>
+  <text class="label" x="446" y="220" text-anchor="middle">译为中文</text>
+  <path d="M 500 239 H 390" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)"/>
+</svg>
