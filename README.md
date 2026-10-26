@@ -79,7 +79,27 @@ Bilingual View 让你用中文输入和阅读，同时将支持的用户输入�
 
 ## 安装
 
-下载并解压 Bilingual View，或复制本项目目录。在包含 `.claude-plugin` 和 `hooks` 的目录中运行：
+### Marketplace 安装
+
+在系统终端运行以下命令，将插件安装到当前用户范围：
+
+```sh
+claude plugin marketplace add againest1/bilingual-view
+claude plugin install bilingual-view@bilingual-view --scope user
+```
+
+也可以在 Claude Code 交互式终端会话中依次运行，并在安装界面选择用户范围（user）：
+
+```text
+/plugin marketplace add againest1/bilingual-view
+/plugin install bilingual-view@bilingual-view
+```
+
+安装后启动新的 Claude Code 会话；已打开的终端会话也可以运行 `/reload-plugins`。输入框上方出现 **Bilingual View** 设置栏后，按[配置](#配置)填写翻译服务。
+
+### 手动安装
+
+从 [GitHub 仓库](https://github.com/againest1/bilingual-view)下载并解压 Bilingual View，或复制本项目目录。在包含 `.claude-plugin` 和 `hooks` 的目录中运行：
 
 ```sh
 mkdir -p "$HOME/.claude/skills/bilingual-view"
@@ -89,6 +109,39 @@ cp -R .claude-plugin hooks "$HOME/.claude/skills/bilingual-view/"
 启动新的 Claude Code 会话。Mod 会从该目录自动加载，无需注册到插件市场。输入框上方会显示 **Bilingual View**、**On/Off（开启/关闭）** 按钮和 **Settings（设置）**。
 
 ## 更新与卸载
+
+### Marketplace 安装
+
+以下命令在系统终端运行。插件更新和卸载命令中的 `--scope user` 对应上文的用户范围安装；若插件安装在项目或本地范围，请分别改为 `--scope project` 或 `--scope local`。
+
+更新市场目录并更新插件：
+
+```sh
+claude plugin marketplace update bilingual-view
+claude plugin update bilingual-view@bilingual-view --scope user
+```
+
+本项目按 Git 提交提供更新。更新后启动新会话，或在已打开的终端会话中运行 `/reload-plugins`。Marketplace 更新后旧版本的中文缓存目前不会自动沿用，详见[数据与翻译缓存](#数据与翻译缓存)。
+
+如需自动更新，在 `/plugin` 的 **Marketplaces** 页面选择 **bilingual-view**，再启用 **Enable auto-update**；第三方市场默认不自动更新。
+
+卸载插件：
+
+```sh
+claude plugin uninstall bilingual-view@bilingual-view --scope user
+```
+
+卸载后启动新会话，或在已打开的终端会话中运行 `/reload-plugins`。卸载不会删除 Claude 的会话历史。
+
+如果也不再需要这个市场源，可以继续移除上文添加到用户范围的市场源：
+
+```sh
+claude plugin marketplace remove bilingual-view --scope user
+```
+
+更多命令用法见 [Claude Code 插件命令参考](https://code.claude.com/docs/en/plugins/cli-reference)。
+
+### 手动安装
 
 更新时，将新版 `.claude-plugin` 和 `hooks` 目录复制到现有安装目录，然后启动新会话。如需保留已保存的中文内容，请保留 `cache/`。
 
@@ -158,13 +211,13 @@ cp -R .claude-plugin hooks "$HOME/.claude/skills/bilingual-view/"
 
 需要翻译的文本会发送到你配置的翻译服务，包括受支持提示词中的自然语言内容、在 `AskUserQuestion` 中自行输入的回答，以及需要翻译显示的文本。Mod 不会在每次翻译时发送整个会话。翻译服务凭据通过 Claude 的配置管理。
 
-中文原文和译文保存在 Mod 安装目录下的 `cache/` 中，与 Claude 的会话历史分开存储。每个会话的缓存最多占用 4 MiB；缓存文件达到上限时，较早的记录可能被移除。升级时保留此目录，即可保留已保存的中文输入。删除此目录也会删除已保存的译文和中文原文；后续重新翻译无法还原你最初输入的准确措辞。
+中文原文和译文保存在 Mod 安装目录下的 `cache/` 中，与 Claude 的会话历史分开存储。每个会话的缓存最多占用 4 MiB；缓存文件达到上限时，较早的记录可能被移除。手动安装时，更新文件但保留此目录，即可保留已保存的中文输入。Marketplace 更新会使用新的插件版本目录，目前不会自动沿用旧版本的缓存。删除缓存目录也会删除已保存的译文和中文原文；后续重新翻译无法还原你最初输入的准确措辞。
 
 同一会话请勿同时在多个 Claude Code 实例中使用，以免丢失已保存的中文文本。
 
 ## 常见问题
 
-- **看不到设置栏：** 检查 `.claude-plugin` 和 `hooks` 是否直接位于 `~/.claude/skills/bilingual-view/` 下，然后启动新会话。使用的 Claude 宿主必须支持 Mods。
+- **看不到设置栏：** Marketplace 安装用户可在 `/plugin` 的 **Installed** 页面确认 `bilingual-view@bilingual-view` 已安装并启用，然后启动新会话，或在终端会话中运行 `/reload-plugins`。手动安装用户请检查 `.claude-plugin` 和 `hooks` 是否直接位于 `~/.claude/skills/bilingual-view/` 下，然后启动新会话。使用的 Claude 宿主必须支持 Mods。
 - **获取模型列表时返回 HTTP 404：** 检查 Provider URL 是否以 API 基础路径（如 `/v1`）或 `/chat/completions` 结尾。如果服务不提供 `/models` 接口，请手动填写 Model ID。
 - **翻译失败：** 使用 `/bilingual-view check` 检查 URL、密钥和模型。请使用能直接返回译文的模型，然后重试。
 - **Claude 收到了中文：** 请查看[输入翻译范围](#输入翻译范围)。命令参数、保留文本、`AskUserQuestion` 中选中的选项、关闭翻译时的输入，以及其他会话上下文，都可能包含中文。绕过翻译的输入不会显示翻译失败提示。
