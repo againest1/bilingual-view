@@ -45,10 +45,12 @@ claude plugin install bilingual-view@bilingual-view
 | 设置项 | 填写内容 |
 | --- | --- |
 | **Provider URL** | 服务的 API 基础地址，例如 `https://provider.example/v1`。也支持完整的 `/chat/completions` 地址，不要填写 `/models` 地址。 |
-| **API key** | 点击 **Set API key** 填写密钥；仅在服务不要求身份验证时留空。 |
+| **API key** | 输入密钥并按 **Enter** 保存，成功后立即生效；服务无需身份验证时可不填。 |
 | **Model ID** | 输入翻译模型标识，或点击 **Fetch models** 从列表选择。 |
 
-需要翻译的文本会发送到这个服务。模型列表不可用时，可直接填写 Model ID。更多说明见[配置指南](USAGE.md#配置)。
+需要翻译的文本会发送到这个服务。模型列表不可用时，可直接填写 Model ID。
+
+API key 由 Claude 保存；输入时可见，保存后只显示是否已设置。更多说明见[配置指南](USAGE.md#配置)。
 
 ### 3 · 开始使用
 
@@ -122,3 +124,7 @@ claude plugin install bilingual-view@bilingual-view
 ## 更多说明
 
 [完整使用指南](USAGE.md) · [更新与卸载](USAGE.md#更新与卸载) · [清理翻译缓存](USAGE.md#清理翻译缓存) · [全部命令](USAGE.md#bilingual-view-命令)
+
+## 许可证
+
+本项目采用 [MIT License](LICENSE)。

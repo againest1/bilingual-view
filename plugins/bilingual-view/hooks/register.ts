@@ -118,16 +118,44 @@ async function loadModels($: EngineInterface, options: PluginOptions, listing: M
   catch (error) { listing.error = error instanceof Error ? error.message : 'Could not fetch models. You can still enter a model ID manually.'; }
   finally { listing.loading = false; $.ui.invalidate('ui.render'); }
 }
-async function configureKey($: EngineInterface) {
-  const rows = await $.config.list();
-  const owner = rows.find(row => row.key === $.plugin.name + '.base_url')?.provider.plugin ?? $.plugin.name;
-  await $.ui.close({ id: SETTINGS_PANE });
-  // Sensitive userConfig fields have no config.set row. The host's existing
-  // configuration dialog owns their secure input and credential storage.
-  $.clock.after(0, async () => {
-    try { await $.command.run({ command: 'plugin', args: 'configure ' + owner }); }
-    catch { await $.ui.toast('Run /plugin configure ' + owner + ' to set the API key.'); }
-  });
+async function saveApiKey($: EngineInterface, value: string): Promise<string | undefined> {
+  const key = value.trim();
+  if (!key) return;
+  if (/[\r\n]/.test(key)) {
+    await $.ui.toast('API keys must be a single line.');
+    return;
+  }
+  try {
+    const rows = await $.config.list();
+    const owner = rows.find(row => row.key === $.plugin.name + '.base_url')?.provider.plugin;
+    if (!owner) throw new Error('Plugin configuration is unavailable.');
+    const userHome = await $.env.get('HOME') || await $.env.get('USERPROFILE');
+    let executable = 'claude';
+    if (userHome) {
+      for (const name of ['claude', 'claude.exe']) {
+        const path = userHome.replace(/[\\/]+$/, '') + '/.local/bin/' + name;
+        if (await $.fs.exists(path)) { executable = path; break; }
+      }
+    }
+    // Sensitive fields have no config.set row. The CLI uses the same host
+    // credential storage; stdin keeps the key out of command arguments.
+    const result = await $.process.run([executable, 'plugin', 'configure', owner,
+      '--values-stdin', '--json'], {
+      // A temporary --plugin-dir installation is otherwise absent in the child.
+      env: owner.endsWith('@inline') ? { CLAUDE_CODE_PLUGIN_DIRS: $.plugin.root } : undefined,
+      stdin: JSON.stringify({ api_key: key }), timeoutMs: 10000,
+    });
+    if (result.exitCode !== 0) throw new Error('Configuration was not saved.');
+    const saved = JSON.parse(result.stdout);
+    if (!saved.saved?.includes('api_key') || saved.unconfigured?.includes('api_key')) {
+      throw new Error('The saved API key could not be confirmed.');
+    }
+    return key;
+  } catch {
+    // CLI diagnostics can contain submitted values. Keep errors UI-only and
+    // never echo the key or subprocess output.
+    await $.ui.toast('API key was not saved. Check that Claude CLI is available, or configure it through /plugin.');
+  }
 }
 async function checkProvider($: EngineInterface, options: PluginOptions) {
   try {
@@ -157,7 +185,10 @@ async function questionRecord($: EngineInterface, state: State, options: PluginO
 }
 
 
-export const register: Register = (on, options) => {
+export const register: Register = (on, configuredOptions) => {
+  // Persistence belongs to the host. Update this shared runtime snapshot only
+  // after a successful save, so requests use the new key without a reload.
+  const options = { ...configuredOptions };
   const state = newState();
   // Ephemeral UI data only. All settings are written through the host's userConfig.
   const listing: ModelListing = { models: [], loading: false, error: '' };
@@ -443,10 +474,15 @@ export const register: Register = (on, options) => {
       Text({ dimColor: true, children: 'When off, input is sent unchanged and messages show their original text.' }),
       Input({ key: 'bv-base-url', label: 'Provider URL', value: config.baseUrl, submitLabel: 'Save',
         onSubmit: value => saveSetting($, 'base_url', value.trim()) }),
-      Box({ flexDirection: 'row', gap: 1, children: [
-        Text({ children: 'API key: ' + (config.apiKey ? 'Set' : 'Not set') }),
-        Button({ key: 'bv-api-key', label: 'Set API key', onPress: () => configureKey($) }),
-      ] }),
+      Input({ key: 'bv-api-key', label: 'API key', value: '', submitLabel: 'Save',
+        placeholder: config.apiKey ? 'Set (enter a new key to replace)' : 'Not set (enter a key)',
+        onSubmit: async value => {
+          const key = await saveApiKey($, value);
+          if (key === undefined) return;
+          options.api_key = key;
+          $.ui.invalidate('ui.render');
+          await $.ui.toast('API key saved.');
+        } }),
       ...(listing.models.length && choices.length ? [Select({ key: 'bv-model-select', label: 'Select model', value: config.model,
         options: choices.map(value => ({ value, label: value })), onSelect: value => saveSetting($, 'model', value) })] : []),
       Input({ key: 'bv-model', label: 'Model ID', value: config.model, submitLabel: 'Save',

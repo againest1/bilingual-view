@@ -46,13 +46,17 @@ cp -R plugins/bilingual-view/.claude-plugin plugins/bilingual-view/hooks "$HOME/
 | 设置项 | 填写说明 |
 | --- | --- |
 | Provider URL（服务地址） | 填写基础 URL，例如 `https://provider.example/v1`，并包含服务要求的路径前缀。支持 HTTP 和 HTTPS。 |
-| API key（API 密钥） | 点击 **Set API key（设置 API 密钥）** 打开 Claude 的配置表单。仅在服务不要求身份验证时留空。 |
+| API key（API 密钥） | 输入密钥并按 **Enter** 保存，成功后立即用于当前会话。服务无需身份验证时可不填。 |
 | Model ID（模型标识） | 输入翻译模型的标识，或点击 **Fetch models（获取模型列表）** 后选择。这不会改变 Claude 会话使用的模型。 |
 | Translation（翻译） | 开启或关闭翻译，默认开启。 |
 
 也可以填写完整的 `/chat/completions` URL。**不要**将 `/models` 地址填入 Provider URL：例如，应填写 `http://provider.example/v1`，而不是 `http://provider.example/v1/models`。
 
 模型列表仅在手动请求时获取，不会自动刷新，也不会在 Mod 重新加载后保留。如果服务不提供模型列表接口，可以手动填写 Model ID。
+
+密钥输入时文本可见。保存成功后，输入框清空并显示 **Set（已设置）**。更换密钥时输入新值并再次保存；留空提交不会清除或更改已有密钥。
+
+若提示密钥无法保存，可运行 `/plugin`，选择本插件的 **Configure（配置）** 填写。
 
 点击 **Test connection（测试连接）** 或运行 `/bilingual-view check` 可发送示例翻译请求。该示例不会成为 Claude 会话中的消息。
 
