@@ -122,7 +122,7 @@ claude plugin update bilingual-view@bilingual-view
 claude plugin uninstall bilingual-view@bilingual-view
 ```
 
-卸载后启动新会话，或在已打开的终端会话中运行 `/reload-plugins`。卸载不会删除 Claude 的会话历史。
+卸载后启动新会话，或在已打开的终端会话中运行 `/reload-plugins`。卸载插件会保留翻译缓存；如需彻底清理，请再[清理翻译缓存](#清理翻译缓存)。Claude 的会话历史不受影响。
 
 如果也不再需要这个市场源，可以继续移除上文添加到用户范围的市场源：
 
@@ -134,9 +134,19 @@ claude plugin marketplace remove bilingual-view
 
 ### 手动方式
 
-更新时，将新版 `.claude-plugin` 和 `hooks` 目录复制到现有安装目录，然后启动新会话。如需保留已保存的中文内容，请保留 `cache/`。
+更新时，将新版 `.claude-plugin` 和 `hooks` 目录复制到现有安装目录，然后启动新会话。翻译缓存保存在独立目录中，不受更新影响。
 
-卸载时，删除 `~/.claude/skills/bilingual-view/` 并启动新会话。这也会删除本地中文显示缓存，但不会影响 Claude 的会话历史。
+卸载时，删除 `~/.claude/skills/bilingual-view/` 并启动新会话。需要同时删除中文原文和译文时，再按下文[清理翻译缓存](#清理翻译缓存)删除缓存目录。Claude 的会话历史不受影响。
+
+### 清理翻译缓存
+
+两种安装方式的缓存都保存在 `~/.claude/bilingual-view/cache/`，卸载插件后仍会保留。不再需要已保存的中文原文和译文时，在关闭使用该 Mod 的会话后运行：
+
+```sh
+rm -rf "$HOME/.claude/bilingual-view/cache/"
+```
+
+这会删除所有会话的翻译缓存；重新翻译无法还原你最初输入的准确中文措辞。
 
 ## 配置
 
@@ -202,7 +212,9 @@ claude plugin marketplace remove bilingual-view
 
 需要翻译的文本会发送到你配置的翻译服务，包括受支持提示词中的自然语言内容、在 `AskUserQuestion` 中自行输入的回答，以及需要翻译显示的文本。Mod 不会在每次翻译时发送整个会话。翻译服务凭据通过 Claude 的配置管理。
 
-中文原文和译文保存在 Mod 安装目录下的 `cache/` 中，与 Claude 的会话历史分开存储。每个会话的缓存最多占用 4 MiB；缓存文件达到上限时，较早的记录可能被移除。手动安装时，更新文件但保留此目录，即可保留已保存的中文输入。Marketplace 更新会使用新的插件版本目录，目前不会自动沿用旧版本的缓存。删除缓存目录也会删除已保存的译文和中文原文；后续重新翻译无法还原你最初输入的准确措辞。
+中文原文和译文统一保存在 `~/.claude/bilingual-view/cache/`，与 Claude 的会话历史分开存储。手动安装和 Marketplace 安装使用同一个固定目录，更新插件或更换安装目录后仍可读取已保存的内容。
+
+每个会话的缓存最多占用 4 MiB；缓存文件达到上限时，较早的记录可能被移除。卸载插件会保留缓存，需要删除时请按[清理翻译缓存](#清理翻译缓存)操作。删除缓存也会删除已保存的译文和中文原文；后续重新翻译无法还原你最初输入的准确措辞。
 
 同一会话请勿同时在多个 Claude Code 实例中使用，以免丢失已保存的中文文本。
 

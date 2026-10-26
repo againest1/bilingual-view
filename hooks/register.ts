@@ -14,12 +14,18 @@ import type { Question, QuestionResult } from './questions.ts';
 
 // Keep every Claude API call visible in this entry module. The domain modules
 // receive callbacks, never `$` or a host namespace, and need no extra process.
-function hostIO($: EngineInterface): RuntimeIO {
+async function cachePath($: EngineInterface, path: string): Promise<string> {
+  const userHome = await $.env.get('HOME') || await $.env.get('USERPROFILE');
+  if (!userHome) throw new Error('Cannot locate the home directory for the translation cache.');
+  return userHome.replace(/[\\/]+$/, '') + '/.claude/bilingual-view/' + path;
+}
+
+export function hostIO($: EngineInterface): RuntimeIO {
   return {
     cacheFiles: {
-      read: path => $.fs.read($.plugin.root + '/' + path),
-      write: (path, text) => $.fs.write($.plugin.root + '/' + path, text),
-      exists: path => $.fs.exists($.plugin.root + '/' + path),
+      read: async path => $.fs.read(await cachePath($, path)),
+      write: async (path, text) => $.fs.write(await cachePath($, path), text),
+      exists: async path => $.fs.exists(await cachePath($, path)),
     },
     env: {
       baseUrl: () => $.env.get('BILINGUAL_VIEW_BASE_URL'),
