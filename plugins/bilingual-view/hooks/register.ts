@@ -311,6 +311,7 @@ export const register: Register = (on, configuredOptions) => {
   });
 
   on('turn.start', async ($, e, next) => {
+    if (e.agentId) return next(e);
     state.activeTurn = e.turnId;
     state.turns.set(e.turnId, { rows: [] });
     return next(e);
