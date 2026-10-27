@@ -2,7 +2,8 @@ import type { PluginOptions } from 'claude-code';
 import type { RuntimeIO } from './ports.ts';
 import type { DisplayMessageRef, DisplayTask, MessageIdentity, SessionMessageRef, RecordEntry, State } from './state.ts';
 import { translate } from './translation.ts';
-import { clearOutputWork, memoryKey, outputWorkKey, readRecord, saveRecord } from './storage.ts';
+import { clearOutputWork, memoryKey, outputWorkKey, readRecord, saveRecord, sessionRecordReader } from './storage.ts';
+import type { RecordReader } from './storage.ts';
 import { referenceFor, refreshHistory } from './history.ts';
 import { needsDisplayTranslation, needsTranslation } from './text.ts';
 import { diagnosticStatus } from './diagnostics.ts';
@@ -34,14 +35,15 @@ export async function displayRecord(io: RuntimeIO, state: State, ref: SessionMes
 
 /** All producers use this entry. Admission is serialized; HTTP is not awaited here. */
 export function ensureTranslation(io: RuntimeIO, state: State, options: PluginOptions, ref: DisplayMessageRef,
-  retry = false, canAdmit: () => boolean = () => true): Promise<EnsureResult> {
+  retry = false, canAdmit: () => boolean = () => true,
+  read: RecordReader = id => readRecord(io, state, ref.session, id, true)): Promise<EnsureResult> {
   const admit = state.output.admission.then(async (): Promise<EnsureResult> => {
-    const result = await readRecord(io, state, ref.session, ref.id, true);
+    const result = await read(ref.id);
     if (matchesRole(result, ref.kind) && ready(result)) return { status: 'ready', record: result };
     const key = memoryKey(ref.session, ref.id);
     const local = state.output.jobs.get(key);
     if (local) return sameMessage(local.ref, ref) ? { status: local.status, record: local.record } : { status: 'obsolete' };
-    const work = await readRecord(io, state, ref.session, outputWorkKey(ref.id), true);
+    const work = await read(outputWorkKey(ref.id));
     const previous = matchesRole(work, ref.kind) ? work : matchesRole(result, ref.kind) ? result : null;
     if (previous && ready(previous)) return { status: 'ready', record: previous };
     const sources = previous ? previous.blocks.map(block => block.source) : ref.sources;
@@ -150,31 +152,69 @@ async function execute(state: State, task: DisplayTask): Promise<void> {
   }
 }
 
+/** The last known display, without triggering another cache-file read. */
+function cachedDisplayRecord(state: State, ref: SessionMessageRef): RecordEntry | null {
+  const result = state.records.get(memoryKey(ref.session, ref.id));
+  if (matchesRole(result, ref.kind) && ready(result)) return result;
+  const local = state.output.jobs.get(memoryKey(ref.session, ref.id));
+  if (local && sameMessage(local.ref, ref)) return local.record;
+  const work = state.records.get(memoryKey(ref.session, outputWorkKey(ref.id)));
+  if (matchesRole(work, ref.kind)) return work;
+  return matchesRole(result, ref.kind) ? result : null;
+}
+
+function sameDisplay(a: RecordEntry | null, b: RecordEntry): boolean {
+  return a === b || !!a && a.kind === b.kind && a.chineseSource === b.chineseSource
+    && a.blocks.length === b.blocks.length && a.blocks.every((block, i) => {
+      const other = b.blocks[i]!;
+      return block.source === other.source && block.display === other.display && block.status === other.status
+        && block.error === other.error && block.translationMs === other.translationMs;
+    });
+}
+
 /** One coalesced check for visible rows lacking a valid result. */
 export async function pollVisible(io: RuntimeIO, state: State, options: PluginOptions): Promise<void> {
   if (state.polling) return;
   state.polling = true;
   const view = state.view;
+  let changed = false;
   try {
     if (!view.visible.size) return;
-    if ([...view.visible.values()].some(item => item.kind === 'assistant')) await refreshHistory(io, state, view);
+    const read = sessionRecordReader(io, state, view.session);
+    let checkedHistory = false;
     for (const [id, item] of [...view.visible]) {
       if (state.view !== view) return;
-      const ref: DisplayMessageRef | undefined = item.kind === 'assistant'
-        ? await referenceFor(io, state, view, id, true)
-        : { kind: item.kind, id, sources: [item.text], session: view.session };
       const stillVisible = () => state.view === view && view.visible.get(id)?.kind === item.kind;
+      if (!stillVisible()) continue;
+      const previous = cachedDisplayRecord(state, { ...item, session: view.session });
+      const previousTask = state.output.jobs.get(memoryKey(view.session, id))?.status;
+      const hadReference = item.kind !== 'assistant' || view.finals.has(id);
+      let ref: DisplayMessageRef | undefined = item.kind === 'assistant'
+        ? await referenceFor(io, state, view, id, true, read)
+        : { kind: item.kind, id, sources: [item.text], session: view.session };
+      // Known live/cache references need no transcript scan. One missing
+      // reference can refresh the index for all remaining assistant rows.
+      if (!ref && !checkedHistory && stillVisible()) {
+        checkedHistory = true;
+        await refreshHistory({ ...io, invalidate: () => { changed = true; } }, state, view);
+        if (stillVisible()) ref = await referenceFor(io, state, view, id, true, read);
+      }
       if (!ref || !stillVisible()) continue;
-      // ensureTranslation already checks the shared completed result before
-      // admitting work. Reuse that result instead of reading it twice.
-      const result = await ensureTranslation(io, state, options, ref, false, stillVisible);
+      // Only queries share the snapshot. Accepted tasks retain the real IO
+      // and continue to redraw on progress after this poll has returned.
+      const result = await ensureTranslation(io, state, options, ref, false, stillVisible, read);
       if (state.view !== view) return;
       if (!stillVisible()) continue;
       if (result.status === 'ready' || result.status === 'skipped') {
         if (item.kind === 'assistant') state.diagnostics.record('visible', view.session, id, result.status, {}, true);
         view.visible.delete(id);
-        io.invalidate();
-      } else if (result.status !== 'deferred' && result.status !== 'obsolete') io.invalidate();
+      }
+      if (!hadReference || result.record && !sameDisplay(previous, result.record)) changed = true;
+      if (result.status === 'queued' && previousTask !== 'queued'
+        || result.status === 'running' && previousTask !== 'running') changed = true;
     }
-  } finally { state.polling = false; }
+  } finally {
+    state.polling = false;
+    if (changed && state.view === view) io.invalidate();
+  }
 }

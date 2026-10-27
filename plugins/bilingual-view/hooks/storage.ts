@@ -6,6 +6,7 @@ const PREFIX = 'bilingual-view.v1.';
 export const CACHE_FILE_MAX_BYTES = 4 * 1024 * 1024;
 export const outputWorkKey = (id: string): string => 'output:' + id;
 export const memoryKey = (session: string, id: string): string => JSON.stringify([session, id]);
+export type RecordReader = (id: string) => Promise<RecordEntry | null>;
 export function cacheFilePath(session: string): string {
   if (!session) throw new Error('Missing cache session');
   return 'cache/' + encodeURIComponent(session) + '.json';
@@ -72,6 +73,39 @@ function updateFile(io: StorageIO, state: State, session: string, id: string, re
   return update;
 }
 
+function rememberRecord(state: State, session: string, id: string, saved: unknown): RecordEntry | null {
+  const key = memoryKey(session, id);
+  // A missing disk entry does not invalidate a still-cached record.
+  const record = validRecord(saved) ? saved : state.records.get(key) ?? null;
+  state.records.set(key, record);
+  return record;
+}
+
+/** Reuse one parsed session file for a batch of queries, never for writes. */
+export function sessionRecordReader(io: StorageIO, state: State, session: string): RecordReader {
+  let afterWrites: Promise<unknown> | undefined;
+  let snapshot: Promise<Record<string, unknown>> | undefined;
+  return async id => {
+    for (;;) {
+      const writes = state.cacheWrites;
+      if (!snapshot || afterWrites !== writes) {
+        afterWrites = writes;
+        snapshot = writes.then(() => readFile(io, cacheFilePath(session)));
+      }
+      let file: Record<string, unknown> | undefined;
+      try { file = await snapshot; }
+      catch {
+        if (writes !== state.cacheWrites) continue;
+        state.diagnostics.record('cache.read', session, id, 'failed', {}, true);
+      }
+      // Task progress or an input save may write while this batch is reading.
+      // Wait for that write and reload before returning an older record.
+      if (writes !== state.cacheWrites) continue;
+      return rememberRecord(state, session, id, file?.[PREFIX + id]);
+    }
+  };
+}
+
 export async function readRecord(io: StorageIO, state: State, session: string, id: string, fresh = false): Promise<RecordEntry | null> {
   const key = memoryKey(session, id);
   const cached = state.records.get(key);
@@ -81,10 +115,7 @@ export async function readRecord(io: StorageIO, state: State, session: string, i
     state.diagnostics.record('cache.read', session, id, 'failed', {}, true);
     saved = null;
   }
-  // A missing disk entry does not invalidate a still-cached record.
-  const record = validRecord(saved) ? saved : cached ?? null;
-  state.records.set(key, record);
-  return record;
+  return rememberRecord(state, session, id, saved);
 }
 
 export async function saveRecord(io: StorageIO, state: State, session: string, id: string, record: RecordEntry): Promise<void> {

@@ -1,6 +1,7 @@
 import type { RuntimeIO } from './ports.ts';
 import type { FinalAnswerRef, State, View } from './state.ts';
 import { outputWorkKey, readRecord } from './storage.ts';
+import type { RecordReader } from './storage.ts';
 
 /** Identify final answers from request structure and completed-turn markers. */
 export function indexFinalAnswers(jsonl: string): Map<string, FinalAnswerRef> {
@@ -67,10 +68,14 @@ export async function refreshHistory(io: RuntimeIO, state: State, view: View): P
     const jsonl = await io.history.read(view.path);
     if (state.view !== view) return;
     const refs = indexFinalAnswers(jsonl);
-    for (const [id, ref] of refs) if (!view.finals.has(id)) view.finals.set(id, { ...ref, session: view.session });
+    let added = false;
+    for (const [id, ref] of refs) if (!view.finals.has(id)) {
+      view.finals.set(id, { ...ref, session: view.session });
+      added = true;
+    }
     view.historyStamp = stamp;
     state.diagnostics.record('history', view.session, '', 'indexed', { count: refs.size }, true);
-    io.invalidate();
+    if (added) io.invalidate();
   } catch {
     state.diagnostics.record('history', view.session, '', 'read_failed', {}, true);
     // A missing, oversized or unreadable history is not permission to guess.
@@ -79,11 +84,11 @@ export async function refreshHistory(io: RuntimeIO, state: State, view: View): P
 
 /** Existing final-only display records also provide evidence after a restart. */
 export async function referenceFor(io: RuntimeIO, state: State, view: View, id: string,
-  fresh = false): Promise<FinalAnswerRef | undefined> {
+  fresh = false, read: RecordReader = key => readRecord(io, state, view.session, key, fresh)): Promise<FinalAnswerRef | undefined> {
   const known = view.finals.get(id);
   if (known) return known;
   for (const key of [id, outputWorkKey(id)]) {
-    const record = await readRecord(io, state, view.session, key, fresh);
+    const record = await read(key);
     if (state.view !== view) return;
     if (record?.kind === 'assistant') {
       const ref: FinalAnswerRef = { kind: 'assistant', id, sources: record.blocks.map(b => b.source), session: view.session };
