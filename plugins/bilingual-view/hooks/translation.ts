@@ -14,7 +14,7 @@ export function inputFailure(error: unknown, typedAnswer = false): string {
   return (typedAnswer ? 'Your typed answer was not submitted. ' : 'Your message was not submitted. ') + reason;
 }
 
-/** Same sequential translation flow; HTTP and environment access are injected. */
+/** Translate up to two chunks at a time per call, preserving source order. */
 export async function translate(io: TranslationIO, options: PluginOptions, source: string, direction: 'en' | 'zh', signal?: AbortSignal): Promise<string> {
   if (!needsTranslation(source, direction)) return source;
   aborted(signal);
@@ -23,13 +23,14 @@ export async function translate(io: TranslationIO, options: PluginOptions, sourc
   const key = String(options.api_key || await io.env.apiKey() || '');
   const config = providerConfig(base, model, key);
   const protectedText = protectText(source);
+  const chunks = splitText(protectedText.text);
   const pieces: string[] = [];
-  for (const chunk of splitText(protectedText.text)) {
+  const translateChunk = async (chunk: string): Promise<string> => {
     aborted(signal);
     const leading = chunk.match(/^\s*/)?.[0] ?? '';
     const trailing = chunk.match(/\s*$/)?.[0] ?? '';
     const body = chunk.trim();
-    if (!body) { pieces.push(chunk); continue; }
+    if (!body) return chunk;
     const request = async (correction?: TranslationCorrection): Promise<string> => {
       aborted(signal);
       let response;
@@ -53,8 +54,21 @@ export async function translate(io: TranslationIO, options: PluginOptions, sourc
       translated = await request({ text: translated, detail: error.detail });
       restoreText(translated, chunkText);
     }
-    pieces.push(leading + translated + trailing);
-  }
+    return leading + translated + trailing;
+  };
+  let nextChunk = 0, stopped = false;
+  const worker = async (): Promise<void> => {
+    while (!stopped && nextChunk < chunks.length) {
+      const index = nextChunk++;
+      try { pieces[index] = await translateChunk(chunks[index]!); }
+      catch (error) { stopped = true; throw error; }
+    }
+  };
+  // Drain both workers before returning, even on failure, so the display queue
+  // cannot start the next message while this one's requests are still in flight.
+  const results = await Promise.allSettled([worker(), worker()]);
+  const failure = results.find(result => result.status === 'rejected');
+  if (failure?.status === 'rejected') throw failure.reason;
   const translated = pieces.join('');
   if (direction === 'en' && /\p{Script=Han}/u.test(translated)) {
     throw new Error('The translator left Chinese in text that should be English. Retry or choose another translation model.');
