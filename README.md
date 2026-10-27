@@ -31,7 +31,13 @@ Write prompts in Chinese, send them in English, and read replies in Chinese. Swi
 
 ### 2 · 更省 token
 
-![同一内容在不同语言下的 token 数相对英文的倍数：Anthropic 的中文为 1.65×](assets/token-count-by-language.jpg)
+<p align="center">
+  <a href="assets/token-count-by-language.jpg">
+    <img src="assets/token-count-by-language.jpg" alt="同一内容在不同语言下的 token 数相对英文的倍数：Anthropic 的中文为 1.65×" width="560">
+  </a>
+</p>
+
+<p align="center"><sub>点击图片查看原图。</sub></p>
 
 上图比较了同一内容的不同语言版本，经各模型的 tokenizer 分词后，token 数相对英文版本的倍数（英文为 1×）。在这组测试中，**Anthropic（Claude）的中文 token 数约为英文的 1.65×**，也就是多约 65%。
 
