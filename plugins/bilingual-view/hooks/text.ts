@@ -91,12 +91,34 @@ function indentedCodeEnd(source: string, start: number, indent: string, blockEnd
 }
 
 function inlineCodeEnd(source: string, start: number, ticks: string): number | undefined {
-  const runs = /`+/g;
+  const prefix = source.slice(source.lastIndexOf('\n', start - 1) + 1, start);
+  const container = prefix.match(/^(?:[ \t]*>[ \t]?|[ \t]*(?:[-+*]|\d+[.)])[ \t]+)*/)![0];
+  const quotes = (container.match(/>/g) ?? []).length;
+  const indent = columns(container.replace(/^.*>[ \t]?/, ''));
+  const orderedList = /\d+[.)][ \t]+/.test(container);
+  const heading = /^ {0,3}#{1,6}(?:[ \t]|$)/.test(prefix.slice(container.length));
+  const runs = /`+|\r?\n/g;
   runs.lastIndex = start + ticks.length;
-  const newline = source.indexOf('\n', runs.lastIndex);
   for (let found; (found = runs.exec(source));) {
-    if (newline >= 0 && found.index >= newline) break;
-    if (found[0].length === ticks.length) return runs.lastIndex;
+    if (found[0][0] === '`') {
+      if (found[0].length === ticks.length) return runs.lastIndex;
+      continue;
+    }
+    // Soft line breaks belong to a code span; paragraph and block boundaries do not.
+    if (heading) return;
+    const newline = source.indexOf('\n', runs.lastIndex);
+    let line = source.slice(runs.lastIndex, newline < 0 ? source.length : newline).replace(/\r$/, '');
+    // Quote markers and list indentation can continue the opening paragraph.
+    for (let i = 0; i < quotes; i++) line = line.replace(/^[ \t]*>[ \t]?/, '');
+    let offset = 0, width = 0;
+    while (width < indent && /[ \t]/.test(line[offset] ?? '')) {
+      width += line[offset++] === '\t' ? 4 - width % 4 : 1;
+    }
+    if (width >= indent) line = line.slice(offset);
+    const orderedItem = line.match(/^ {0,3}(\d{1,9})[.)](?:[ \t]+|$)/);
+    if (/^[ \t]*$/.test(line)
+      || orderedItem && (orderedList || Number(orderedItem[1]) === 1)
+      || /^ {0,3}(?:#{1,6}(?:[ \t]|$)|>|[-+*](?:[ \t]+|$)|<pasted_content id="|(?:`{3,}(?!`)[^`]*|~{3,}.*)$|(?:=+|-+|(?:\*[ \t]*){3,}|(?:_[ \t]*){3,})[ \t]*$)/.test(line)) return;
   }
 }
 
