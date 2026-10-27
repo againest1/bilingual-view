@@ -1,5 +1,6 @@
 import type { StorageIO } from './ports.ts';
 import type { RecordEntry, State } from './state.ts';
+import { diagnosticStatus } from './diagnostics.ts';
 
 const PREFIX = 'bilingual-view.v1.';
 export const CACHE_FILE_MAX_BYTES = 4 * 1024 * 1024;
@@ -53,6 +54,7 @@ function updateFile(io: StorageIO, state: State, session: string, id: string, re
     const path = cacheFilePath(session), key = PREFIX + id;
     // An unfit single record cannot be made to fit by evicting other records.
     if (record && byteLength(JSON.stringify({ [key]: record })) > CACHE_FILE_MAX_BYTES) {
+      if (record.kind === 'assistant') state.diagnostics.record('cache.write', session, id, 'too_large', {}, true);
       await io.toast('This display cache entry exceeds 4 MiB and was not saved to the session file.');
       return;
     }
@@ -63,6 +65,8 @@ function updateFile(io: StorageIO, state: State, session: string, id: string, re
       delete file[key];
     }
     await io.cacheFiles.write(path, boundedJson(file));
+    if (record?.kind === 'assistant') state.diagnostics.record('cache.write', session, id, 'file_written',
+      { cache: diagnosticStatus(record) }, true);
   });
   state.cacheWrites = update.catch(() => undefined);
   return update;
@@ -73,7 +77,10 @@ export async function readRecord(io: StorageIO, state: State, session: string, i
   const cached = state.records.get(key);
   if (!fresh && cached !== undefined) return cached;
   let saved: unknown;
-  try { saved = (await readFile(io, cacheFilePath(session)))[PREFIX + id]; } catch { saved = null; }
+  try { saved = (await readFile(io, cacheFilePath(session)))[PREFIX + id]; } catch {
+    state.diagnostics.record('cache.read', session, id, 'failed', {}, true);
+    saved = null;
+  }
   // A missing disk entry does not invalidate a still-cached record.
   const record = validRecord(saved) ? saved : cached ?? null;
   state.records.set(key, record);
@@ -83,7 +90,10 @@ export async function readRecord(io: StorageIO, state: State, session: string, i
 export async function saveRecord(io: StorageIO, state: State, session: string, id: string, record: RecordEntry): Promise<void> {
   state.records.set(memoryKey(session, id), record);
   try { await updateFile(io, state, session, id, record); }
-  catch { await io.toast('The display cache could not be saved. It remains available in this session; resuming may show the original text.'); }
+  catch {
+    if (record.kind === 'assistant') state.diagnostics.record('cache.write', session, id, 'failed', {}, true);
+    await io.toast('The display cache could not be saved. It remains available in this session; resuming may show the original text.');
+  }
 }
 
 export async function clearOutputWork(io: StorageIO, state: State, session: string, id: string): Promise<void> {

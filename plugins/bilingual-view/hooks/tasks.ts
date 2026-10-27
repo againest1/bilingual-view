@@ -5,6 +5,7 @@ import { translate } from './translation.ts';
 import { clearOutputWork, memoryKey, outputWorkKey, readRecord, saveRecord } from './storage.ts';
 import { referenceFor, refreshHistory } from './history.ts';
 import { needsDisplayTranslation, needsTranslation } from './text.ts';
+import { diagnosticStatus } from './diagnostics.ts';
 
 /** Shared user/assistant display queue, including the one currently running. */
 export const MAX_OUTPUT_TASKS = 32;
@@ -63,6 +64,7 @@ export function ensureTranslation(io: RuntimeIO, state: State, options: PluginOp
     state.output.jobs.set(key, task);
     state.output.queue.push(task);
     await saveRecord(io, state, ref.session, outputWorkKey(ref.id), record);
+    if (ref.kind === 'assistant') state.diagnostics.record('translation', ref.session, ref.id, 'queued', { count: sources.length });
     schedule(state);
     return { status: 'queued', record };
   });
@@ -77,6 +79,10 @@ function schedule(state: State): void {
 }
 
 function redraw(state: State, task: DisplayTask): void {
+  if (task.ref.kind === 'assistant') state.diagnostics.record('redraw', task.ref.session, task.ref.id,
+    state.view.session !== task.ref.session ? 'different_session'
+      : state.view.finals.has(task.ref.id) ? 'requested' : 'no_final_reference',
+    { view: state.view.session, cache: diagnosticStatus(task.record) }, true);
   if (state.view.session !== task.ref.session) return;
   if (task.ref.kind !== 'assistant') {
     const current = state.view.visible.get(task.ref.id);
@@ -94,6 +100,7 @@ async function runNext(state: State): Promise<void> {
   if (!task) return;
   state.output.running = true;
   task.status = 'running';
+  if (task.ref.kind === 'assistant') state.diagnostics.record('translation', task.ref.session, task.ref.id, 'running');
   redraw(state, task);
   try {
     await execute(state, task);
@@ -104,6 +111,8 @@ async function runNext(state: State): Promise<void> {
     }
     await saveRecord(task.io, state, task.ref.session, outputWorkKey(task.ref.id), task.record).catch(() => undefined);
   } finally {
+    if (task.ref.kind === 'assistant') state.diagnostics.record('translation', task.ref.session, task.ref.id,
+      diagnosticStatus(task.record), { count: task.record.blocks.length });
     state.output.jobs.delete(memoryKey(task.ref.session, task.ref.id));
     state.output.running = false;
     redraw(state, task);
@@ -160,6 +169,7 @@ export async function pollVisible(io: RuntimeIO, state: State, options: PluginOp
       if (state.view !== view) return;
       if (!stillVisible()) continue;
       if (result.status === 'ready' || result.status === 'skipped') {
+        if (item.kind === 'assistant') state.diagnostics.record('visible', view.session, id, result.status, {}, true);
         view.visible.delete(id);
         io.invalidate();
       } else if (result.status !== 'deferred' && result.status !== 'obsolete') io.invalidate();

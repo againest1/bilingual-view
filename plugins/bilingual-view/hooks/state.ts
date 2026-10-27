@@ -2,6 +2,7 @@ import type { TextRow } from './text.ts';
 import type { PluginOptions } from 'claude-code';
 import type { RuntimeIO } from './ports.ts';
 import { MemoryCache, DISPLAY_CACHE_MAX_ENTRIES, DISPLAY_CACHE_MAX_BYTES } from './memory.ts';
+import { Diagnostics } from './diagnostics.ts';
 
 export type Block = { source: string; display: string; status: 'ready' | 'pending' | 'error'; error?: string };
 export type RecordEntry = {
@@ -33,6 +34,7 @@ export function newView(session: string, path?: string): View {
 }
 
 export type State = {
+  diagnostics: Diagnostics;
   records: MemoryCache<RecordEntry | null>;
   cacheWrites: Promise<unknown>;
   pending: PendingInput[];
@@ -51,6 +53,7 @@ export type State = {
 
 export function newState(): State {
   return {
+    diagnostics: new Diagnostics(),
     records: new MemoryCache(DISPLAY_CACHE_MAX_ENTRIES, DISPLAY_CACHE_MAX_BYTES),
     cacheWrites: Promise.resolve(),
     originals: new Set(),

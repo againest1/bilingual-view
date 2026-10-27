@@ -11,6 +11,7 @@ import { effectiveSettings, enabled, fetchModels, SETTINGS_PANE } from './settin
 import { providerConfig } from './provider.ts';
 import { questionId, answerId, questionSource, drawQuestions, drawQuestionResult, translateAnswers } from './questions.ts';
 import type { Question, QuestionResult } from './questions.ts';
+import { diagnosticStatus, DIAGNOSTIC_FILE } from './diagnostics.ts';
 
 // Keep every Claude API call visible in this entry module. The domain modules
 // receive callbacks, never `$` or a host namespace, and need no extra process.
@@ -18,6 +19,17 @@ async function cachePath($: EngineInterface, path: string): Promise<string> {
   const userHome = await $.env.get('HOME') || await $.env.get('USERPROFILE');
   if (!userHome) throw new Error('Cannot locate the home directory for the translation cache.');
   return userHome.replace(/[\\/]+$/, '') + '/.claude/bilingual-view/' + path;
+}
+
+async function exportDiagnostics($: EngineInterface, state: State): Promise<void> {
+  try {
+    const path = await cachePath($, DIAGNOSTIC_FILE);
+    const snapshot = state.diagnostics.snapshot(state.view.session, await $.clock.now());
+    await $.fs.write(path, snapshot);
+    await $.ui.toast('Diagnostic snapshot saved to ' + path + '. It replaces the previous snapshot.');
+  } catch {
+    await $.ui.toast('The diagnostic snapshot could not be saved. Recent events remain in memory; you can retry.');
+  }
 }
 
 export function hostIO($: EngineInterface): RuntimeIO {
@@ -195,8 +207,9 @@ export const register: Register = (on, configuredOptions) => {
 
   on('session.start', async ($, e, next) => {
     const session = await $.session.id();
+    state.diagnostics.record('session.start', session, '', 'observed', { view: state.view.session });
     if (state.session !== session) switchView(state, session);
-    await $.command.register({ name: 'bilingual-view', description: 'Translation settings, on/off controls, and connection test', argumentHint: '[status|settings|on|off|check]', immediate: true });
+    await $.command.register({ name: 'bilingual-view', description: 'Translation settings, connection test, and diagnostic snapshot', argumentHint: '[status|settings|on|off|check|diagnostics]', immediate: true });
     if (!state.pollStarted) {
       state.pollStarted = true;
       $.clock.every(1000, () => enabled(options) ? pollVisible(hostIO($), state, options) : undefined);
@@ -206,11 +219,15 @@ export const register: Register = (on, configuredOptions) => {
   });
 
   on('session.end', async ($, e, next) => {
+    state.diagnostics.record('session.end', e.sessionId, '', 'observed', { view: state.view.session });
     switchView(state, '');
     return next(e);
   });
 
   on('classic.SessionStart', async ($, e, next) => {
+    state.diagnostics.record('session.history', e.session_id, '',
+      e.source === 'compact' ? 'compact' : e.source === 'resume' ? 'resume' : 'start',
+      { view: state.view.session, count: state.view.finals.size });
     if (e.source === 'compact' && state.session === e.session_id) {
       state.view.path = e.transcript_path;
       state.view.historyStamp = undefined;
@@ -309,7 +326,11 @@ export const register: Register = (on, configuredOptions) => {
     state.turns.delete(e.turnId);
     if (state.activeTurn === e.turnId) state.activeTurn = null;
     const result = await next(e);
-    if (!enabled(options) || e.isAborted || e.reason === 'error' || !turn || !e.answer.trim()) return result;
+    if (!enabled(options) || e.isAborted || e.reason === 'error' || !turn || !e.answer.trim()) {
+      state.diagnostics.record('final', view.session, e.turnId,
+        !enabled(options) ? 'disabled' : e.isAborted ? 'aborted' : e.reason === 'error' ? 'turn_error' : !turn ? 'no_turn' : 'empty');
+      return result;
+    }
     const surfaces = await $.session.surfaces();
     if (!surfaces.includes('terminal') && !surfaces.includes('desktop')) return result;
     // turn.complete.answer may contain only the last block. A successful final
@@ -319,6 +340,7 @@ export const register: Register = (on, configuredOptions) => {
         ? turn.rows.flatMap(row => row.texts.filter(text => text.trim()).map(source => ({ id: row.id, source }))) : []
       : finalBlocks(turn.rows, e.answer);
     if (!blocks.length) {
+      state.diagnostics.record('final', view.session, e.turnId, 'unidentified', { count: turn.rows.length });
       if (needsDisplayTranslation(e.answer)) await $.ui.toast('The final message could not be identified. The original text is unchanged.');
       return result;
     }
@@ -328,6 +350,7 @@ export const register: Register = (on, configuredOptions) => {
       grouped.get(block.id)!.sources.push(block.source);
     }
     for (const [id, ref] of grouped) {
+      state.diagnostics.record('final', view.session, id, 'identified', { count: ref.sources.length });
       if (state.view === view) view.finals.set(id, ref);
       await ensureTranslation(hostIO($), state, options, ref);
     }
@@ -416,59 +439,77 @@ export const register: Register = (on, configuredOptions) => {
   });
 
   on('ui.render', { component: 'AssistantMessage' }, async ($, e, next) => {
-    if (!enabled(options) || (e.surface !== 'terminal' && e.surface !== 'desktop')) return next(e);
     const view = state.view;
-    if (!view.session) return next(e);
-    if (e.props.onScreen === null) view.visible.delete(e.requestId);
-    else if (e.props.onScreen) view.visible.set(e.requestId, { kind: 'assistant', id: e.requestId, text: e.props.text });
-    const ref = await referenceFor(hostIO($), state, view, e.requestId);
-    if (!ref || state.view !== view) return next(e);
-    let record = await displayRecord(hostIO($), state, ref);
-    if (state.view !== view) return next(e);
-    let needsChinese = needsDisplayTranslation((record?.blocks.map(block => block.source) ?? ref.sources).join('\n\n'));
-    if (ready(record) || !needsChinese) view.visible.delete(e.requestId);
-    else if (e.props.onScreen) {
-      const ensured = await ensureTranslation(hostIO($), state, options, ref, false,
-        () => state.view === view && view.visible.get(ref.id)?.kind === 'assistant');
-      record = ensured.record ?? record;
-      if (ensured.status === 'skipped') { needsChinese = false; view.visible.delete(ref.id); }
+    const visibility = e.props.onScreen === null ? 'hidden' : e.props.onScreen ? 'visible' : 'unknown';
+    state.diagnostics.record('render.enter', view.session, e.requestId, enabled(options) ? 'enabled' : 'disabled',
+      { surface: e.surface, visibility }, true);
+    let outcome = 'failed', record: RecordEntry | null = null;
+    try {
+      if (!enabled(options) || (e.surface !== 'terminal' && e.surface !== 'desktop')) {
+        outcome = !enabled(options) ? 'disabled' : 'unsupported_surface';
+        return next(e);
+      }
+      if (!view.session) { outcome = 'no_session'; return next(e); }
+      if (e.props.onScreen === null) view.visible.delete(e.requestId);
+      else if (e.props.onScreen) view.visible.set(e.requestId, { kind: 'assistant', id: e.requestId, text: e.props.text });
+      const ref = await referenceFor(hostIO($), state, view, e.requestId);
+      if (!ref || state.view !== view) { outcome = state.view !== view ? 'view_changed' : 'no_final_reference'; return next(e); }
+      record = await displayRecord(hostIO($), state, ref);
+      if (state.view !== view) { outcome = 'view_changed'; return next(e); }
+      let needsChinese = needsDisplayTranslation((record?.blocks.map(block => block.source) ?? ref.sources).join('\n\n'));
+      if (ready(record) || !needsChinese) view.visible.delete(e.requestId);
+      else if (e.props.onScreen) {
+        const ensured = await ensureTranslation(hostIO($), state, options, ref, false,
+          () => state.view === view && view.visible.get(ref.id)?.kind === 'assistant');
+        record = ensured.record ?? record;
+        if (ensured.status === 'skipped') { needsChinese = false; view.visible.delete(ref.id); }
+      }
+      if (state.view !== view) { outcome = 'view_changed'; return next(e); }
+      if (!record) { outcome = 'no_record'; return next(e); }
+      const key = 'assistant:' + ref.id;
+      const showOriginal = state.originals.has(key);
+      const queued = state.output.jobs.get(memoryKey(ref.session, ref.id))?.status === 'queued';
+      // Read the entire saved message in order. Render text does not select or
+      // validate its contents, and all saved parts share this UUID's choice.
+      const original = record.blocks.map(block => block.source).join('\n\n');
+      const chinese = record.blocks.map(block => block.status === 'ready' ? block.display : block.source).join('\n\n');
+      // Adapt only translated display copies. Pending/unchanged blocks and the
+      // saved-text equality used to hide redundant controls stay untouched.
+      const display = showOriginal ? original : record.blocks.map(block => block.status === 'ready'
+        ? block.display === block.source ? block.display : translatedChineseDisplay(block.display)
+        : block.source).join('\n\n');
+      const needsWork = !ready(record) && needsChinese;
+      const error = record.blocks.find(block => block.status === 'error')?.error;
+      const status = !needsWork ? '' : record.blocks.some(block => block.status === 'error') ? error || 'Translation failed. Please retry.'
+        : queued ? 'Waiting for translation...' : 'Translating final answer...';
+      const mode = showOriginal ? 'original' : original !== chinese ? 'translated' : 'pending';
+      state.diagnostics.record('render.prepare', view.session, e.requestId, mode,
+        { cache: diagnosticStatus(record), surface: e.surface }, true);
+      const drawing = await next({ ...e, props: { ...e.props, text: display } });
+      if (!needsWork && original === chinese) { outcome = 'unchanged'; return drawing; }
+      const result = messageDrawing($, e, drawing, display,
+        { key: 'original-' + key, label: showOriginal ? 'Show Chinese' : 'View original',
+          onPress: () => {
+            if (state.view !== view) return;
+            const cacheKey = memoryKey(ref.session, ready(record) ? ref.id : outputWorkKey(ref.id));
+            if (!state.records.get(cacheKey)) state.records.set(cacheKey, record);
+            if (state.originals.has(key)) state.originals.delete(key); else state.originals.add(key);
+            $.ui.invalidate('ui.render');
+          },
+        }, status,
+        needsWork && record.blocks.some(block => block.status === 'error') ? { key: 'retry-' + key, label: 'Retry translation',
+          onPress: async () => {
+            await ensureTranslation(hostIO($), state, options, ref, true, () => state.view === view);
+            if (state.view === view) $.ui.invalidate('ui.render');
+          },
+        } : undefined);
+      // This confirms only the hook's return, not that the surface painted it.
+      outcome = 'returned_' + mode + '_controls';
+      return result;
+    } finally {
+      state.diagnostics.record('render.result', view.session, e.requestId, outcome,
+        { view: state.view.session, cache: diagnosticStatus(record), surface: e.surface, visibility }, true);
     }
-    if (state.view !== view) return next(e);
-    if (!record) return next(e);
-    const key = 'assistant:' + ref.id;
-    const showOriginal = state.originals.has(key);
-    const queued = state.output.jobs.get(memoryKey(ref.session, ref.id))?.status === 'queued';
-    // Read the entire saved message in order. Render text does not select or
-    // validate its contents, and all saved parts share this UUID's choice.
-    const original = record.blocks.map(block => block.source).join('\n\n');
-    const chinese = record.blocks.map(block => block.status === 'ready' ? block.display : block.source).join('\n\n');
-    // Adapt only translated display copies. Pending/unchanged blocks and the
-    // saved-text equality used to hide redundant controls stay untouched.
-    const display = showOriginal ? original : record.blocks.map(block => block.status === 'ready'
-      ? block.display === block.source ? block.display : translatedChineseDisplay(block.display)
-      : block.source).join('\n\n');
-    const needsWork = !ready(record) && needsChinese;
-    const error = record.blocks.find(block => block.status === 'error')?.error;
-    const status = !needsWork ? '' : record.blocks.some(block => block.status === 'error') ? error || 'Translation failed. Please retry.'
-      : queued ? 'Waiting for translation...' : 'Translating final answer...';
-    const drawing = await next({ ...e, props: { ...e.props, text: display } });
-    if (!needsWork && original === chinese) return drawing;
-    return messageDrawing($, e, drawing, display,
-      { key: 'original-' + key, label: showOriginal ? 'Show Chinese' : 'View original',
-        onPress: () => {
-          if (state.view !== view) return;
-          const cacheKey = memoryKey(ref.session, ready(record) ? ref.id : outputWorkKey(ref.id));
-          if (!state.records.get(cacheKey)) state.records.set(cacheKey, record);
-          if (state.originals.has(key)) state.originals.delete(key); else state.originals.add(key);
-          $.ui.invalidate('ui.render');
-        },
-      }, status,
-      needsWork && record.blocks.some(block => block.status === 'error') ? { key: 'retry-' + key, label: 'Retry translation',
-        onPress: async () => {
-          await ensureTranslation(hostIO($), state, options, ref, true, () => state.view === view);
-          if (state.view === view) $.ui.invalidate('ui.render');
-        },
-      } : undefined);
   });
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
@@ -588,6 +629,7 @@ export const register: Register = (on, configuredOptions) => {
     if (arg === 'settings') await openSettings($);
     else if (arg === 'on' || arg === 'off') await saveSetting($, 'enabled', arg === 'on');
     else if (arg === 'check') await checkProvider($, options);
+    else if (arg === 'diagnostics') await exportDiagnostics($, state);
     else {
       const config = await effectiveSettings(hostIO($), options);
       await $.ui.toast(`Translation ${config.enabled ? 'On' : 'Off'}; Provider: ${config.baseUrl || 'Not set'}; Model: ${config.model || 'Not set'}; API key: ${config.apiKey ? 'Set' : 'Not set'}. Settings: /bilingual-view settings`);

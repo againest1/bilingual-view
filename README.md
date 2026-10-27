@@ -124,7 +124,7 @@ API key 由 Claude 保存；输入时可见，保存后只显示是否已设置�
 
 ## 更多说明
 
-[完整使用指南](USAGE.md) · [更新与卸载](USAGE.md#更新与卸载) · [清理翻译缓存](USAGE.md#清理翻译缓存) · [全部命令](USAGE.md#bilingual-view-命令)
+[完整使用指南](USAGE.md) · [问题反馈与诊断](USAGE.md#问题反馈与诊断) · [更新与卸载](USAGE.md#更新与卸载) · [清理翻译缓存](USAGE.md#清理翻译缓存) · [全部命令](USAGE.md#bilingual-view-命令)
 
 ## 许可证
 

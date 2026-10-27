@@ -59,14 +59,20 @@ export async function refreshHistory(io: RuntimeIO, state: State, view: View): P
   try {
     const stat = await io.history.stat(view.path);
     const stamp = stat.size + ':' + stat.mtimeMs;
-    if (stamp === view.historyStamp || stat.size > 4 * 1024 * 1024) return;
+    if (stamp === view.historyStamp) return;
+    if (stat.size > 4 * 1024 * 1024) {
+      state.diagnostics.record('history', view.session, '', 'too_large', {}, true);
+      return;
+    }
     const jsonl = await io.history.read(view.path);
     if (state.view !== view) return;
     const refs = indexFinalAnswers(jsonl);
     for (const [id, ref] of refs) if (!view.finals.has(id)) view.finals.set(id, { ...ref, session: view.session });
     view.historyStamp = stamp;
+    state.diagnostics.record('history', view.session, '', 'indexed', { count: refs.size }, true);
     io.invalidate();
   } catch {
+    state.diagnostics.record('history', view.session, '', 'read_failed', {}, true);
     // A missing, oversized or unreadable history is not permission to guess.
   } finally { view.loadingHistory = false; }
 }
