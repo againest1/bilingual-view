@@ -43,6 +43,53 @@ function fenceEnd(source: string, start: number, fence: string, prefix: string):
   return source.length;
 }
 
+/** Keep an indented block whole, without treating paragraph/list indentation as code. */
+function indentedCodeEnd(source: string, start: number, indent: string, blockEnds: Set<number>): number | undefined {
+  const closedBlock = /^[ \t]*(?:#{1,6}(?:[ \t]|$)|(?:=+|-+|(?:\*[ \t]*){3,}|(?:_[ \t]*){3,}|(?:-[ \t]*){3,}|`{3,}|~{3,})[ \t]*$)/;
+  let required = 4, minimum = columns(indent), first = true;
+  for (let at = start; at > 0;) {
+    const end = at - 1;
+    at = end > 0 ? source.lastIndexOf('\n', end - 1) + 1 : 0;
+    const line = source.slice(at, end).replace(/\r$/, '');
+    const blank = /^[ \t]*$/.test(line);
+    // Code can follow a blank line or a closed block, but cannot interrupt prose.
+    if (first && !blank && !closedBlock.test(line) && !blockEnds.has(at + line.length)) return;
+    first = false;
+    if (blank) continue;
+    const width = columns(line.match(/^[ \t]*/)![0]);
+    const list = line.match(/^([ \t]*)([-+*]|\d+[.)])([ \t]+)/);
+    if (list && width < minimum) {
+      const markerWidth = columns(list[1]! + list[2]!);
+      const contentIndent = columns(list[0]);
+      const padding = contentIndent - markerWidth;
+      const listIndent = markerWidth + (padding > 4 ? 1 : padding);
+      if (listIndent <= minimum) { required += listIndent; break; }
+    }
+    // A list paragraph may continue without indentation. Only an actual block
+    // boundary, rather than that lazy continuation, can end its list context.
+    if (!list && width < minimum && at > 0) {
+      const previousEnd = at - 1;
+      const previousStart = previousEnd > 0 ? source.lastIndexOf('\n', previousEnd - 1) + 1 : 0;
+      const previous = source.slice(previousStart, previousEnd).replace(/\r$/, '');
+      if (previous.trim() && !closedBlock.test(previous) && !blockEnds.has(previousStart + previous.length)) continue;
+    }
+    minimum = Math.min(minimum, width);
+    if (!minimum) break;
+  }
+  let end = start;
+  for (let at = start; at < source.length;) {
+    const newline = source.indexOf('\n', at);
+    const line = source.slice(at, newline < 0 ? source.length : newline).replace(/\r$/, '');
+    if (!/^[ \t]*$/.test(line)) {
+      if (columns(line.match(/^[ \t]*/)![0]) < required) break;
+      end = at + line.length;
+    }
+    at = newline < 0 ? source.length : newline + 1;
+  }
+  // Interior blank lines belong to the literal; trailing ones remain separators.
+  return end > start ? end : undefined;
+}
+
 function inlineCodeEnd(source: string, start: number, ticks: string): number | undefined {
   const runs = /`+/g;
   runs.lastIndex = start + ticks.length;
@@ -88,11 +135,13 @@ export function protectText(source: string): ProtectedText {
   let prefix = 'BV_LITERAL_';
   while (source.includes(prefix)) prefix = '_' + prefix;
   const values: string[] = [];
-  // Match spans on the original source: a paste or fence stays one literal,
+  const blockEnds = new Set<number>();
+  // Match spans on the original source: a paste or code block stays one literal,
   // including any other syntax inside it. Link and paste patterns are unchanged.
   const pattern = new RegExp([
     /<pasted_content id="(?<pasteId>[^"\r\n]+)">\r?\n[\s\S]*?\r?\n<\/pasted_content id="\k<pasteId>">(?:\r?\n)?/.source,
     /^(?<fencePrefix>(?:[ \t]*>[ \t]?|[ \t]*(?:[-+*]|\d+[.)])[ \t]+)* {0,3})(?:(?<backticks>`{3,})(?!`)[^`\r\n]*|(?<tildes>~{3,})(?!~)[^\r\n]*)(?:\r?\n|$)/.source,
+    /^(?<indented>(?: {4}| {0,3}\t)[ \t]*)(?=[^ \t\r\n])/.source,
     /(?<ticks>`+)/.source,
     /(?<math>\\[([]|(?<!\$)\${1,2}(?!\$))/.source,
     /https?:\/\/[^\s<>"\uff09)]+|!?\[[^\]\n]*\]\([^\n)]*\)/.source,
@@ -107,7 +156,11 @@ export function protectText(source: string): ProtectedText {
     const group = match.groups!;
     if (group.ticks && escapedAt(source, match.index)) { pattern.lastIndex = match.index + 1; continue; }
     let end = pattern.lastIndex;
-    if (group.backticks || group.tildes) end = fenceEnd(source, end, group.backticks || group.tildes!, group.fencePrefix!);
+    const indent = group.indented || group.fencePrefix?.match(/^[ \t]*/)?.[0];
+    const indentedEnd = indent && columns(indent) >= 4 ? indentedCodeEnd(source, match.index, indent, blockEnds) : undefined;
+    if (indentedEnd !== undefined) end = indentedEnd;
+    else if (group.backticks || group.tildes) end = fenceEnd(source, end, group.backticks || group.tildes!, group.fencePrefix!);
+    else if (group.indented) end = match.index;
     else if (group.ticks) end = inlineCodeEnd(source, match.index, group.ticks) ?? match.index;
     else if (group.math) end = mathEnd(source, match.index, group.math) ?? match.index;
     else if (group.path || group.mention && !/^@["']/.test(group.mention)) end = referenceEnd(source, match.index, end);
@@ -116,6 +169,7 @@ export function protectText(source: string): ProtectedText {
     // A whole quoted question/reply is prose, rather than a literal embedded
     // in an instruction. Still look inside for explicit files, code or formulas.
     if (source.trim() === value && /^["'\u201c\u300c\u300e]/u.test(value)) { pattern.lastIndex = match.index + 1; continue; }
+    if (group.indented || group.backticks || group.tildes || group.pasteId) blockEnds.add(end);
     const index = values.push(value) - 1;
     pieces.push(source.slice(cursor, match.index), `${prefix}${index}_END`);
     cursor = end;
