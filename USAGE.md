@@ -60,7 +60,7 @@ Provider URL 也可以填写完整的 `/chat/completions` 地址，**不要填�
 
 ### 测试翻译速度
 
-点击 **Test translation speed（测试翻译速度）**，或运行 `/bilingual-view speed`。它会使用当前配置的翻译服务和模型，将内置的约 3,500 字符英文样本翻成中文。与连接测试一样，请求不会成为 Claude 会话中的消息。
+点击 **Test translation speed（测试翻译速度）**，或运行 `/bilingual-view speed`。它会使用当前配置的翻译服务和模型，将内置的约 2,100 字符英文样本翻成中文。与连接测试一样，请求不会成为 Claude 会话中的消息。
 
 样本会**整篇一次发送，不分片**，单次请求的超时时间仍为 **30 秒（30s）**。日常输入和显示翻译仍按长度分片。
 
