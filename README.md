@@ -1,11 +1,14 @@
 <div align="center">
 
-# Bilingual View
+# Bilingual View — Claude Code 中英双语翻译插件
 
 **中文输入，中文阅读，随时核对原文。**
 
-Claude Code 的双语 Mod。让普通中文提示词以英文提交，<br>
+Claude Code 的双语翻译插件（Mod）。让普通中文提示词以英文提交，<br>
 让符合翻译条件的英文最终回答以中文显示。
+
+A Chinese-English translation plugin (Mod) for Claude Code.<br>
+Translate regular Chinese prompts into English, read supported English final replies in Chinese, and view originals.
 
 [快速开始](#快速开始) · [日常使用](#日常使用) · [常见问题](#常见问题) · [完整指南](USAGE.md)
 
