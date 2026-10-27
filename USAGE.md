@@ -37,11 +37,24 @@ claude plugin install bilingual-view@bilingual-view
 | Provider URL（服务地址） | 填写基础 URL，例如 `https://provider.example/v1`，并包含服务要求的路径前缀。支持 HTTP 和 HTTPS。 |
 | API key（API 密钥） | 输入密钥并按 **Enter** 保存，成功后立即用于当前会话。输入时文本可见；服务无需身份验证时可不填。 |
 | Model ID（模型标识） | 输入翻译模型的标识，或点击 **Fetch models（获取模型列表）** 后选择。这不会改变 Claude 会话使用的模型。 |
+| Effort（思考强度） | 可选 **Provider default（服务默认）**、`none`、`low`、`medium`、`high`、`xhigh`、`max`，默认 `low`。详见[设置思考强度](#设置思考强度)。 |
 | Translation（翻译） | 开启或关闭翻译，默认开启。 |
 
 需要翻译的文本会发送到你配置的服务。密钥由 Claude 保存，中文原文和译文保存在本机；详见[数据与翻译缓存](#数据与翻译缓存)。
 
 Provider URL 也可以填写完整的 `/chat/completions` 地址，**不要填写 `/models` 地址**。模型列表不可用时，直接填写 Model ID 即可。
+
+输入框上方的设置栏会显示当前翻译模型和思考强度，例如 `Bilingual View · my-model(low)`。模型或档位保存成功后，显示和后续翻译立即使用新值。`Not set` 表示尚未配置模型；选择服务默认时，括号内显示 `Provider default`。
+
+### 设置思考强度
+
+在设置中选择 **Effort（思考强度）**，选择后即保存。后续翻译、连接测试和测速会使用该档位；已有译文不会自动重新生成。可运行 `/bilingual-view status` 查看当前档位。
+
+**Provider default（服务默认）** 不发送 `reasoning_effort` 参数，由服务和模型决定是否推理及其强度。它不等于关闭思考，也适用于不接受该参数的服务。
+
+`none` 用于关闭模型的显式推理；`low`、`medium`、`high`、`xhigh`、`max` 依次提高思考强度，更高档位可能增加用时和 token 消耗。首次使用和未设置此项时默认采用 `low`，需要由服务决定时请主动选择 **Provider default**。
+
+**选择具体档位时，翻译服务和模型必须支持 `reasoning_effort` 参数及该档位。** 不同模型支持的档位可能不同，`none` 也不是所有模型都可用。若服务提示参数或档位不支持，可选择 **Provider default** 或它支持的具体档位，再[测试连接](#测试连接)。
 
 ### 测试连接
 
@@ -61,6 +74,8 @@ Provider URL 也可以填写完整的 `/chat/completions` 地址，**不要填�
 ### 测试翻译速度
 
 点击 **Test translation speed（测试翻译速度）**，或运行 `/bilingual-view speed`。它会使用当前配置的翻译服务和模型，将内置的约 2,100 字符英文样本翻成中文。与连接测试一样，请求不会成为 Claude 会话中的消息。
+
+选择 **Model ID（模型标识）** 和 **Effort（思考强度）** 时，建议用长文测速比较不同组合，优先选择在 **15 秒（15s）内** 返回完整译文的组合。超过 15 秒时，可尝试降低 Effort 或更换响应更快的模型后再测。
 
 样本会**整篇一次发送，不分片**，单次请求的超时时间仍为 **30 秒（30s）**。日常输入和显示翻译仍按长度分片。
 
@@ -140,7 +155,7 @@ Claude 通过 `AskUserQuestion` 提问时，问题和选项描述可显示中文
 | `HTTP 408` / Timed out；`HTTP 409` / Conflict | 稍后重试。 |
 | Timed out (30-second limit) | 翻译请求触及宿主的 30 秒时限；重试或换用更快的翻译模型。 |
 | Failed without an HTTP response | 检查连接和 Provider 设置，再重试。 |
-| `HTTP 400` / `422` | 对照服务的请求要求检查配置。 |
+| `HTTP 400` / `422` | 对照服务的请求要求检查配置；若提示 `reasoning_effort` 或档位不支持，按[思考强度说明](#设置思考强度)调整。 |
 | Model is temporarily overloaded / `HTTP 5xx` | 稍后重试或查看服务状态。 |
 | Specific cause could not be determined | 根据 HTTP 状态查阅服务的错误说明，或联系服务商。 |
 | Invalid JSON / Incompatible response format | 检查服务的 Chat Completions 接口兼容性。 |

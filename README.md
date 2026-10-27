@@ -64,6 +64,10 @@ claude plugin install bilingual-view@bilingual-view
 
 需要翻译的文本会发送到这个服务。模型列表不可用时，可直接填写 Model ID。
 
+设置栏会显示当前翻译模型和思考强度，例如 `Bilingual View · my-model(low)`。
+
+默认使用 `low` [思考强度](USAGE.md#设置思考强度)。若服务不支持此参数，可在 **Effort** 中选择 **Provider default（服务默认）**。
+
 API key 由 Claude 保存；输入时可见，保存后只显示是否已设置。更多说明见[配置指南](USAGE.md#配置)。
 
 ### 4 · 开始使用
@@ -80,8 +84,9 @@ API key 由 Claude 保存；输入时可见，保存后只显示是否已设置�
 | 查看 Claude 的原始回答 | 在已翻译的最终回答下方点击 **View original（查看原文）**。 |
 | 切换回中文 | 点击 **Show Chinese（显示中文）**。 |
 | 暂停或恢复翻译 | 点击设置栏的 **On/Off**，或运行 `/bilingual-view off` / `/bilingual-view on`。 |
+| 调整翻译模型的思考强度 | 在 **Settings** 中选择 **Effort**，详见[档位说明](USAGE.md#设置思考强度)。 |
 | 检查设置与连接 | `/bilingual-view status` 查看设置；`/bilingual-view check` 发送示例翻译请求。 |
-| 查看长文本翻译用时 | 点击 **Test translation speed（测试翻译速度）**，或运行 `/bilingual-view speed`。 |
+| 查看长文本翻译用时 | 运行 `/bilingual-view speed`，按[长文测速建议](USAGE.md#测试翻译速度)优先选择 15 秒内返回的组合。 |
 
 **关闭翻译后，输入会按原样提交，消息也会显示原文。** 重新开启不会补译已经发送给 Claude 的中文。查看已发送文本是在提交之后，提交前没有译文预览。
 

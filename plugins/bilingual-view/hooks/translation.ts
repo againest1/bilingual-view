@@ -3,6 +3,7 @@ import type { TranslationIO } from './ports.ts';
 import { LiteralIntegrityError, needsTranslation, protectText, restoreText, splitText } from './text.ts';
 import { parseTranslation, providerConfig, translationRequest } from './provider.ts';
 import type { ProviderConfig, TranslationCorrection } from './provider.ts';
+import { effectiveSettings } from './settings.ts';
 
 export function aborted(signal?: AbortSignal): void {
   if (signal?.aborted) throw new Error('Translation canceled. Retry when you are ready.');
@@ -44,10 +45,8 @@ export async function requestTranslation(io: TranslationIO, config: ProviderConf
 export async function translate(io: TranslationIO, options: PluginOptions, source: string, direction: 'en' | 'zh', signal?: AbortSignal): Promise<string> {
   if (!needsTranslation(source, direction)) return source;
   aborted(signal);
-  const base = String(options.base_url || await io.env.baseUrl() || '');
-  const model = String(options.model || await io.env.model() || '');
-  const key = String(options.api_key || await io.env.apiKey() || '');
-  const config = providerConfig(base, model, key);
+  const settings = await effectiveSettings(io, options);
+  const config = providerConfig(settings.baseUrl, settings.model, settings.apiKey, settings.effort);
   const protectedText = protectText(source);
   const chunks = splitText(protectedText.text);
   const pieces: string[] = [];

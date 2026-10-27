@@ -1,7 +1,15 @@
-export type ProviderConfig = { endpoint: string; model: string; apiKey: string };
+export const REASONING_EFFORTS = ['default', 'none', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
+export type ReasoningEffort = typeof REASONING_EFFORTS[number];
+export type ProviderConfig = { endpoint: string; model: string; apiKey: string; effort: ReasoningEffort };
 export type TranslationCorrection = { text: string; detail: string };
 
-export function providerConfig(base: string, model: string, apiKey: string): ProviderConfig {
+export function reasoningEffort(value: unknown = 'low'): ReasoningEffort {
+  const effort = REASONING_EFFORTS.find(effort => effort === value);
+  if (!effort) throw new Error('Invalid translation Effort. Choose Provider default, none, low, medium, high, xhigh or max in /bilingual-view settings.');
+  return effort;
+}
+
+export function providerConfig(base: string, model: string, apiKey: string, effort: ReasoningEffort = 'low'): ProviderConfig {
   if (!base.trim()) throw new Error('Translation Provider URL is not set. Open /bilingual-view settings and enter the Provider URL.');
   if (!model.trim()) throw new Error('Translation model is not set. Open /bilingual-view settings and enter a Model ID supported by your Provider.');
   let url: URL;
@@ -14,7 +22,7 @@ export function providerConfig(base: string, model: string, apiKey: string): Pro
   if (!path.endsWith('/chat/completions')) path += '/chat/completions';
   url.pathname = path;
   if (/[\r\n]/.test(apiKey)) throw new Error('The translation API key contains line breaks. Paste it as a single line in /bilingual-view settings.');
-  return { endpoint: url.toString(), model: model.trim(), apiKey: apiKey.trim() };
+  return { endpoint: url.toString(), model: model.trim(), apiKey: apiKey.trim(), effort };
 }
 
 export function translationRequest(config: ProviderConfig, source: string, direction: 'en' | 'zh', correction?: TranslationCorrection) {
@@ -27,6 +35,7 @@ export function translationRequest(config: ProviderConfig, source: string, direc
     },
     body: JSON.stringify({
       model: config.model,
+      ...(config.effort === 'default' ? {} : { reasoning_effort: config.effort }),
       stream: false,
       messages: [
         {

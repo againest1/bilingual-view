@@ -1,6 +1,6 @@
 import type { PluginOptions } from 'claude-code';
 import type { TranslationIO } from './ports.ts';
-import { providerConfig } from './provider.ts';
+import { providerConfig, reasoningEffort } from './provider.ts';
 
 export const SETTINGS_PANE = 'bilingual-view-settings';
 export const enabled = (options: PluginOptions): boolean => options.enabled !== false;
@@ -10,6 +10,7 @@ export async function effectiveSettings(io: TranslationIO, options: PluginOption
   return {
     baseUrl: String(options.base_url || await io.env.baseUrl() || ''),
     model: String(options.model || await io.env.model() || ''),
+    effort: reasoningEffort(options.effort),
     apiKey: String(options.api_key || await io.env.apiKey() || ''),
     enabled: enabled(options),
   };

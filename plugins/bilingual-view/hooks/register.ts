@@ -9,7 +9,7 @@ import { memoryKey, outputWorkKey, readRecord, saveRecord } from './storage.ts';
 import { ensureTranslation, displayRecord, pollVisible, ready } from './tasks.ts';
 import { referenceFor, refreshHistory } from './history.ts';
 import { effectiveSettings, enabled, fetchModels, SETTINGS_PANE } from './settings.ts';
-import { providerConfig } from './provider.ts';
+import { providerConfig, reasoningEffort, REASONING_EFFORTS } from './provider.ts';
 import { questionId, answerId, questionSource, drawQuestions, drawQuestionResult, translateAnswers } from './questions.ts';
 import type { Question, QuestionResult } from './questions.ts';
 import { diagnosticStatus, DIAGNOSTIC_FILE } from './diagnostics.ts';
@@ -111,16 +111,19 @@ function messageDrawing($: EngineInterface, e: RenderInput<'UserMessage' | 'Assi
   ] });
 }
 
-async function saveSetting($: EngineInterface, field: string, value: string | boolean) {
+async function saveSetting($: EngineInterface, options: Record<string, PluginOptions[string]>, field: string, value: string | boolean) {
   try {
     if (field === 'base_url' && value) providerConfig(String(value), '_', '');
     const result = await $.config.set({ key: $.plugin.name + '.' + field, value });
     if (result.deny) await $.ui.toast(result.deny);
-    else $.ui.invalidate('ui.render');
+    else {
+      if (result.value !== undefined) options[field] = result.value;
+      $.ui.invalidate('ui.render');
+    }
   } catch { await $.ui.toast('Settings were not saved. Check this field with /plugin configure.'); }
 }
 async function openSettings($: EngineInterface) {
-  await $.ui.open({ id: SETTINGS_PANE, title: 'Bilingual View settings', focus: true, closeOnEscape: true, rows: 22, columns: 64 });
+  await $.ui.open({ id: SETTINGS_PANE, title: 'Bilingual View settings', focus: true, closeOnEscape: true, rows: 27, columns: 64 });
 }
 async function loadModels($: EngineInterface, options: PluginOptions, listing: ModelListing) {
   if (listing.loading) return;
@@ -184,7 +187,7 @@ async function checkTranslationSpeed($: EngineInterface, options: PluginOptions,
   try {
     const io = hostIO($);
     const settings = await effectiveSettings(io, options);
-    const config = providerConfig(settings.baseUrl, settings.model, settings.apiKey);
+    const config = providerConfig(settings.baseUrl, settings.model, settings.apiKey, settings.effort);
     await $.ui.toast('Testing translation speed: translating the full English sample into Chinese...');
     const started = await $.clock.now();
     // The supplied sample is already prepared for the translation prompt.
@@ -227,7 +230,7 @@ async function questionRecord($: EngineInterface, state: State, options: PluginO
 
 export const register: Register = (on, configuredOptions) => {
   // Persistence belongs to the host. Update this shared runtime snapshot only
-  // after a successful save, so requests use the new key without a reload.
+  // after a successful save, so the UI and requests use the same values without a reload.
   const options = { ...configuredOptions };
   const state = newState();
   // Ephemeral UI data only. All settings are written through the host's userConfig.
@@ -546,11 +549,13 @@ export const register: Register = (on, configuredOptions) => {
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const drawing = await next(e);
     if (e.props.hasSurvey || (e.surface !== 'terminal' && e.surface !== 'desktop')) return drawing;
+    const model = String(options.model || await $.env.get('BILINGUAL_VIEW_MODEL') || '').trim();
+    const effort = reasoningEffort(options.effort);
     const { Box, Text, Button } = $.ui.resolve(e);
     return Box({ flexDirection: 'column', children: [Box({ flexDirection: 'row', flexWrap: 'wrap', gap: 1, children: [
-      Text({ dimColor: true, children: 'Bilingual View' }),
+      Text({ dimColor: true, children: `Bilingual View · ${model || 'Not set'}(${effort === 'default' ? 'Provider default' : effort})` }),
       Button({ key: 'bv-toggle', label: enabled(options) ? '\u25cf On' : '\u25cb Off', plain: true,
-        onPress: () => saveSetting($, 'enabled', !enabled(options)) }),
+        onPress: () => saveSetting($, options, 'enabled', !enabled(options)) }),
       Button({ key: 'bv-settings', label: 'Settings', plain: true, onPress: () => openSettings($) }),
       ...([...state.view.inputTranslations].some(input => input.visible)
         ? [Text({ dimColor: true, children: 'Translating to English...' })] : []),
@@ -564,10 +569,10 @@ export const register: Register = (on, configuredOptions) => {
     const choices = [...new Set([config.model, ...listing.models].filter(Boolean))];
     return Box({ flexDirection: 'column', gap: 1, children: [
       Button({ key: 'bv-setting-toggle', label: config.enabled ? 'Translation: On' : 'Translation: Off',
-        onPress: () => saveSetting($, 'enabled', !config.enabled) }),
+        onPress: () => saveSetting($, options, 'enabled', !config.enabled) }),
       Text({ dimColor: true, children: 'When off, input is sent unchanged and messages show their original text.' }),
       Input({ key: 'bv-base-url', label: 'Provider URL', value: config.baseUrl, submitLabel: 'Save',
-        onSubmit: value => saveSetting($, 'base_url', value.trim()) }),
+        onSubmit: value => saveSetting($, options, 'base_url', value.trim()) }),
       Input({ key: 'bv-api-key', label: 'API key', value: '', submitLabel: 'Save',
         placeholder: config.apiKey ? 'Set (enter a new key to replace)' : 'Not set (enter a key)',
         onSubmit: async value => {
@@ -578,11 +583,15 @@ export const register: Register = (on, configuredOptions) => {
           await $.ui.toast('API key saved.');
         } }),
       ...(listing.models.length && choices.length ? [Select({ key: 'bv-model-select', label: 'Select model', value: config.model,
-        options: choices.map(value => ({ value, label: value })), onSelect: value => saveSetting($, 'model', value) })] : []),
+        options: choices.map(value => ({ value, label: value })), onSelect: value => saveSetting($, options, 'model', value) })] : []),
       Input({ key: 'bv-model', label: 'Model ID', value: config.model, submitLabel: 'Save',
-        onSubmit: value => saveSetting($, 'model', value.trim()) }),
+        onSubmit: value => saveSetting($, options, 'model', value.trim()) }),
       Button({ key: 'bv-models', label: listing.loading ? 'Fetching models...' : 'Fetch models', onPress: () => loadModels($, options, listing) }),
       Text({ dimColor: true, children: listing.error || (listing.models.length ? `Fetched ${listing.models.length} models. The list is kept only for this loaded instance.` : 'Fetch models on demand, or enter a model ID manually.') }),
+      Select({ key: 'bv-effort', label: 'Effort', value: config.effort,
+        options: REASONING_EFFORTS.map(value => ({ value, label: value === 'default' ? 'Provider default' : value })),
+        onSelect: value => saveSetting($, options, 'effort', value) }),
+      Text({ dimColor: true, children: 'Model / Effort tip: Run Test translation speed and prefer a combination that returns the long-text translation within 15s.' }),
       Box({ flexDirection: 'row', flexWrap: 'wrap', gap: 1, children: [
         Button({ key: 'bv-check', label: 'Test connection', onPress: () => checkProvider($, options) }),
         Button({ key: 'bv-speed', label: speedTest.running ? 'Testing translation speed...' : 'Test translation speed',
@@ -661,13 +670,13 @@ export const register: Register = (on, configuredOptions) => {
   on('command.run', { command: 'bilingual-view' }, async ($, e) => {
     const arg = e.args.trim().toLowerCase();
     if (arg === 'settings') await openSettings($);
-    else if (arg === 'on' || arg === 'off') await saveSetting($, 'enabled', arg === 'on');
+    else if (arg === 'on' || arg === 'off') await saveSetting($, options, 'enabled', arg === 'on');
     else if (arg === 'check') await checkProvider($, options);
     else if (arg === 'speed') await checkTranslationSpeed($, options, speedTest);
     else if (arg === 'diagnostics') await exportDiagnostics($, state);
     else {
       const config = await effectiveSettings(hostIO($), options);
-      await $.ui.toast(`Translation ${config.enabled ? 'On' : 'Off'}; Provider: ${config.baseUrl || 'Not set'}; Model: ${config.model || 'Not set'}; API key: ${config.apiKey ? 'Set' : 'Not set'}. Settings: /bilingual-view settings`);
+      await $.ui.toast(`Translation ${config.enabled ? 'On' : 'Off'}; Provider: ${config.baseUrl || 'Not set'}; Model: ${config.model || 'Not set'}; Effort: ${config.effort === 'default' ? 'Provider default' : config.effort}; API key: ${config.apiKey ? 'Set' : 'Not set'}. Settings: /bilingual-view settings`);
     }
     // Returning command text would add it to model context. Use UI-only toasts.
     return {};
