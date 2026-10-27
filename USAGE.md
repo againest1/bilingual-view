@@ -126,6 +126,7 @@ Claude 通过 `AskUserQuestion` 提问时，问题和选项描述可显示中文
 | Organization usage limit reached | 向服务商申请提高用量上限。 |
 | Rate-limit error / Request rate increased too quickly | 降低请求频率，等待后重试。 |
 | `HTTP 408` / Timed out；`HTTP 409` / Conflict | 稍后重试。 |
+| Timed out (30-second limit) | 翻译请求触及宿主的 30 秒时限；重试或换用更快的翻译模型。 |
 | Failed without an HTTP response | 检查连接和 Provider 设置，再重试。 |
 | `HTTP 400` / `422` | 对照服务的请求要求检查配置。 |
 | Model is temporarily overloaded / `HTTP 5xx` | 稍后重试或查看服务状态。 |

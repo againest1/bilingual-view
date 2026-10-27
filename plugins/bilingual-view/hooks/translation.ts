@@ -14,6 +14,14 @@ export function inputFailure(error: unknown, typedAnswer = false): string {
   return (typedAnswer ? 'Your typed answer was not submitted. ' : 'Your message was not submitted. ') + reason;
 }
 
+function isHostHttpTimeout(error: unknown): boolean {
+  // Verified against @anthropic-ai/claude-code-darwin-arm64 2.1.311:
+  // the host emits this exact http.fetch message only when its deadline fires.
+  // Match the host result, not elapsed time, AbortError, or generic timeout text.
+  const message = error instanceof Error ? error.message : '';
+  return /^[^\r\n]+: \$\.http\.fetch\(https?:\/\/\S+\) aborted: no complete answer within 30000ms$/.test(message);
+}
+
 /** Translate up to two chunks at a time per call, preserving source order. */
 export async function translate(io: TranslationIO, options: PluginOptions, source: string, direction: 'en' | 'zh', signal?: AbortSignal): Promise<string> {
   if (!needsTranslation(source, direction)) return source;
@@ -35,10 +43,12 @@ export async function translate(io: TranslationIO, options: PluginOptions, sourc
       aborted(signal);
       let response;
       try { response = await io.fetch(config.endpoint, translationRequest(config, body, direction, correction)); }
-      catch {
+      catch (error) {
         aborted(signal);
-        // This is the host HTTP API, not the OpenAI SDK. Its thrown values have
-        // no verified error contract, so do not infer a transport cause from them.
+        if (isHostHttpTimeout(error)) {
+          throw new Error('The translation request timed out (30-second limit). Retry or choose a faster translation model.');
+        }
+        // Other host exceptions have no verified classification here.
         throw new Error('The translation request failed without an HTTP response. Check the connection and Provider settings, then retry.');
       }
       aborted(signal);
