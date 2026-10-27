@@ -2,7 +2,7 @@ import type { ButtonProps, EngineInterface, Register, PluginOptions, RenderEleme
 import type { RuntimeIO } from './ports.ts';
 import type { DisplayMessageRef, FinalAnswerRef, State, RecordEntry } from './state.ts';
 import { newState, newView } from './state.ts';
-import { finalBlocks, needsTranslation, needsDisplayTranslation, protectText, textBlocks, translatedChineseDisplay } from './text.ts';
+import { finalBlocks, needsTranslation, needsDisplayTranslation, textBlocks, translatedChineseDisplay } from './text.ts';
 import { aborted, translate } from './translation.ts';
 import { memoryKey, outputWorkKey, readRecord, saveRecord } from './storage.ts';
 import { ensureTranslation, displayRecord, pollVisible, ready } from './tasks.ts';
@@ -74,28 +74,12 @@ function switchView(state: State, session: string, path?: string): void {
 
 type ModelListing = { models: string[]; loading: boolean; error: string };
 
-// Inspect text only to choose a control row; the native body stays untouched.
-function separateMessageControl(text: string): boolean {
-  const protectedText = protectText(text.trimEnd());
-  const last = protectedText.text.match(new RegExp(protectedText.prefix + '(\\d+)_END$'));
-  if (last) {
-    const literal = protectedText.values[Number(last[1])]!;
-    if (/\n|^\$\$|^\\\[|^\s*(?:`{3,}|~{3,})/.test(literal)) return true;
-  }
-  const paragraph = protectedText.text.split(/\n\s*\n/).at(-1) ?? '';
-  return /^(?: {4}|\t| {0,3}(?:>|#{1,6}\s|[-+*]\s|\d+[.)]\s))/m.test(paragraph)
-    || /^ {0,3}(?:[-_*]\s*){3,}$/m.test(paragraph)
-    || paragraph.split('\n').some(line => line.includes('|')
-      && /^\s*\|?\s*:?-+:?\s*(?:\|\s*:?-+:?\s*)*\|?\s*$/.test(line));
-}
-
 function messageDrawing($: EngineInterface, e: RenderInput<'UserMessage' | 'AssistantMessage'>,
-  drawing: RenderElement, text: string, toggle: ButtonProps, status: string, retry?: ButtonProps): RenderElement {
+  drawing: RenderElement, toggle: ButtonProps, status: string, retry?: ButtonProps): RenderElement {
   const { Box, Button, Text } = $.ui.resolve(e);
-  // The native assistant body owns the full row. Keep its renderer intact.
-  const separate = e.component === 'AssistantMessage' || separateMessageControl(text);
+  // Keep both message controls below the native body in every display mode.
   const control = Box({ key: 'tail-' + toggle.key, marginLeft: 2, flexShrink: 0,
-    alignSelf: separate ? 'flex-start' : 'flex-end', children:
+    alignSelf: 'flex-start', children:
     Button({ ...toggle, plain: true, hover: { bold: true },
       // The host's message blue follows light, dark, and automatic themes
       // on the drawing surface, including theme changes without a hook rerun.
@@ -103,9 +87,7 @@ function messageDrawing($: EngineInterface, e: RenderInput<'UserMessage' | 'Assi
     }),
   });
   return Box({ flexDirection: 'column', children: [
-    Box({ flexDirection: separate ? 'column' : 'row', flexWrap: 'wrap', children: [
-      separate ? drawing : Box({ flexShrink: 0, children: drawing }), control,
-    ] }),
+    drawing, control,
     ...(status ? [Box({ flexDirection: 'row', flexWrap: 'wrap', gap: 2, marginLeft: 2, children: [
       Text({ dimColor: true, children: status }), ...(retry ? [Button({ ...retry, plain: true })] : []),
     ] })] : []),
@@ -414,7 +396,7 @@ export const register: Register = (on, configuredOptions) => {
       ? ''
       : block?.status === 'error' ? (block.error || 'Translation failed. Please retry.')
       : state.output.jobs.get(memoryKey(ref.session, ref.id))?.status === 'running' ? 'Translating...' : 'Waiting for translation...';
-    return messageDrawing($, e, drawing, display,
+    return messageDrawing($, e, drawing,
       { key: 'sent-' + key, label: showSent ? 'Show Chinese' : 'View sent text',
         onPress: () => {
           if (state.view !== view) return;
@@ -487,7 +469,7 @@ export const register: Register = (on, configuredOptions) => {
         { cache: diagnosticStatus(record), surface: e.surface }, true);
       const drawing = await next({ ...e, props: { ...e.props, text: display } });
       if (!needsWork && original === chinese) { outcome = 'unchanged'; return drawing; }
-      const result = messageDrawing($, e, drawing, display,
+      const result = messageDrawing($, e, drawing,
         { key: 'original-' + key, label: showOriginal ? 'Show Chinese' : 'View original',
           onPress: () => {
             if (state.view !== view) return;

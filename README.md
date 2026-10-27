@@ -76,7 +76,7 @@ API key 由 Claude 保存；输入时可见，保存后只显示是否已设置�
 
 | 你想做什么 | 操作 |
 | --- | --- |
-| 核对提示词实际发送的内容 | 在已翻译的用户消息旁或下方点击 **View sent text（查看已发送文本）**。 |
+| 核对提示词实际发送的内容 | 在已翻译的用户消息下方点击 **View sent text（查看已发送文本）**。 |
 | 查看 Claude 的原始回答 | 在已翻译的最终回答下方点击 **View original（查看原文）**。 |
 | 切换回中文 | 点击 **Show Chinese（显示中文）**。 |
 | 暂停或恢复翻译 | 点击设置栏的 **On/Off**，或运行 `/bilingual-view off` / `/bilingual-view on`。 |
