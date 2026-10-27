@@ -10,7 +10,7 @@ Claude Code 的双语翻译插件（Mod）。用中文提问，自动译成英�
 A Chinese-English translation plugin (Mod) for Claude Code.<br>
 Write prompts in Chinese, send them in English, and read replies in Chinese. Switch to the original text anytime.
 
-[快速开始](#快速开始) · [日常使用](#日常使用) · [常见问题](#常见问题) · [完整指南](USAGE.md)
+[为什么需要它](#为什么需要它) · [快速开始](#快速开始) · [日常使用](#日常使用) · [常见问题](#常见问题) · [完整指南](USAGE.md)
 
 </div>
 
@@ -24,6 +24,20 @@ Write prompts in Chinese, send them in English, and read replies in Chinese. Swi
 - **自选翻译服务**：使用兼容 OpenAI Chat Completions 接口的服务，不改变 Claude 会话使用的模型。
 
 > 命令、思考过程和普通工具输出不翻译；代码、路径等内容保持原样。详见[翻译范围](#翻译范围)。
+
+## 为什么需要它
+
+### 1 · 你懂的
+
+### 2 · 更省 token
+
+![同一内容在不同语言下的 token 数相对英文的倍数：Anthropic 的中文为 1.65×](assets/token-count-by-language.jpg)
+
+上图比较了同一内容的不同语言版本，经各模型的 tokenizer 分词后，token 数相对英文版本的倍数（英文为 1×）。在这组测试中，**Anthropic（Claude）的中文 token 数约为英文的 1.65×**，也就是多约 65%。
+
+图表来源：[Aran Komatsuzaki 的原帖](https://x.com/arankomatsuzaki/status/2049177688402022730)。
+
+把中文提示词译成英文再发送，就是为了降低这部分输入的 token 开销，同时保留中文输入和阅读体验。实际节省量取决于文本和模型，翻译服务本身也会产生用量。
 
 ## 快速开始
 
