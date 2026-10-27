@@ -39,7 +39,17 @@ claude plugin install bilingual-view@bilingual-view
 
 也可以[手动安装](USAGE.md#手动安装)。
 
-### 2 · 配置翻译服务
+### 2 · 开启自动更新（推荐）
+
+**建议通过 Marketplace 安装后开启自动更新，以便及时获得本 Mod 的修复和改进。** 第三方市场默认不会自动更新，需要手动开启：
+
+1. 在 Claude Code 会话中运行 `/plugin`，打开插件管理器。
+2. 切换到 **Marketplaces** 页面，选择 **bilingual-view**。
+3. 选择 **Enable auto-update（启用自动更新）**。
+
+开启后，Claude Code 会在会话启动后检查并更新该市场中已安装的插件。收到更新提示后，启动新会话，或在已打开的终端会话中运行 `/reload-plugins`，即可加载新版。手动更新方式见[更新与卸载](USAGE.md#更新与卸载)。
+
+### 3 · 配置翻译服务
 
 点击 **Settings（设置）**，或运行 `/bilingual-view settings`：
 
@@ -53,7 +63,7 @@ claude plugin install bilingual-view@bilingual-view
 
 API key 由 Claude 保存；输入时可见，保存后只显示是否已设置。更多说明见[配置指南](USAGE.md#配置)。
 
-### 3 · 开始使用
+### 4 · 开始使用
 
 点击 **Test connection（测试连接）**，确认示例翻译成功。该请求发送到你配置的翻译服务，不会成为 Claude 会话中的消息。
 
