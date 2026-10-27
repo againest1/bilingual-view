@@ -129,7 +129,9 @@ async function execute(state: State, task: DisplayTask): Promise<void> {
     if (matchesRole(shared, ref.kind) && ready(shared)) { task.record = shared; return; }
     if (block.status === 'ready') continue;
     try {
+      const started = await io.now();
       block.display = await translate(io, options, block.source, 'zh');
+      block.translationMs = Math.max(0, await io.now() - started);
       block.status = 'ready';
       delete block.error;
     } catch (error) {

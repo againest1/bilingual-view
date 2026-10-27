@@ -4,7 +4,11 @@ import type { RuntimeIO } from './ports.ts';
 import { MemoryCache, DISPLAY_CACHE_MAX_ENTRIES, DISPLAY_CACHE_MAX_BYTES } from './memory.ts';
 import { Diagnostics } from './diagnostics.ts';
 
-export type Block = { source: string; display: string; status: 'ready' | 'pending' | 'error'; error?: string };
+export type Block = {
+  source: string; display: string; status: 'ready' | 'pending' | 'error'; error?: string;
+  /** Successful translation and validation, including automatic repair; absent in older caches. */
+  translationMs?: number;
+};
 export type RecordEntry = {
   v: 1; kind: 'user' | 'assistant' | 'question' | 'answer'; at: number; blocks: Block[];
   /** Tool-answer fields only; selects answers inside one tool call, not message identity. */
@@ -12,7 +16,7 @@ export type RecordEntry = {
   /** User display only. Missing on legacy v1 user records means original input. */
   chineseSource?: 'original' | 'translation';
 };
-type PendingInput = { original: string; translated: string; session: string };
+type PendingInput = { original: string; translated: string; session: string; translationMs: number };
 type Turn = { rows: TextRow[]; stepSeen?: boolean; stopReason?: string | null };
 export type MessageIdentity = { kind: RecordEntry['kind']; id: string };
 export type SessionMessageRef = MessageIdentity & { session: string };

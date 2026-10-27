@@ -76,17 +76,32 @@ function switchView(state: State, session: string, path?: string): void {
 type ModelListing = { models: string[]; loading: boolean; error: string };
 type SpeedTest = { running: boolean };
 
+function translationTiming(record: RecordEntry | null | undefined): string {
+  if (!record || !ready(record)) return '';
+  let ms = 0;
+  for (const block of record.blocks) {
+    // An older cache may have no timing. Never present an incomplete total.
+    if (typeof block.translationMs !== 'number' || !Number.isFinite(block.translationMs) || block.translationMs < 0) return '';
+    ms += block.translationMs;
+  }
+  return `Translated in ${(ms / 1000).toFixed(2)}s`;
+}
+
 function messageDrawing($: EngineInterface, e: RenderInput<'UserMessage' | 'AssistantMessage'>,
-  drawing: RenderElement, toggle: ButtonProps, status: string, retry?: ButtonProps): RenderElement {
+  drawing: RenderElement, toggle: ButtonProps, status: string, record: RecordEntry | null | undefined,
+  retry?: ButtonProps): RenderElement {
   const { Box, Button, Text } = $.ui.resolve(e);
+  const timing = translationTiming(record);
   // Keep both message controls below the native body in every display mode.
   const control = Box({ key: 'tail-' + toggle.key, marginLeft: 2, flexShrink: 0,
-    alignSelf: 'flex-start', children:
-    Button({ ...toggle, plain: true, hover: { bold: true },
-      // The host's message blue follows light, dark, and automatic themes
-      // on the drawing surface, including theme changes without a hook rerun.
-      children: Text({ color: 'briefLabelYou', underline: true, children: toggle.label }),
-    }),
+    alignSelf: 'flex-start', flexDirection: 'row', flexWrap: 'wrap', gap: 2, children: [
+      Button({ ...toggle, plain: true, hover: { bold: true },
+        // The host's message blue follows light, dark, and automatic themes
+        // on the drawing surface, including theme changes without a hook rerun.
+        children: Text({ color: 'briefLabelYou', underline: true, children: toggle.label }),
+      }),
+      ...(timing ? [Text({ dimColor: true, children: timing })] : []),
+    ],
   });
   return Box({ flexDirection: 'column', children: [
     drawing, control,
@@ -261,7 +276,7 @@ export const register: Register = (on, configuredOptions) => {
     const clearStatus = () => {
       if (view.inputTranslations.delete(input) && input.visible && state.view === view) $.ui.invalidate('ui.render');
     };
-    let translated: string;
+    let translated: string, translationMs: number;
     try {
       next.signal?.addEventListener('abort', clearStatus, { once: true });
       // Input has no message UUID until submission; show progress above the
@@ -271,7 +286,9 @@ export const register: Register = (on, configuredOptions) => {
         input.visible = true;
         $.ui.invalidate('ui.render');
       });
+      const started = await $.clock.now();
       translated = await translate(hostIO($), options, e.text, 'en', next.signal);
+      translationMs = Math.max(0, await $.clock.now() - started);
     }
     catch (error) { return { drop: inputFailure(error) }; }
     finally {
@@ -279,7 +296,7 @@ export const register: Register = (on, configuredOptions) => {
       clearStatus();
     }
     aborted(next.signal);
-    const pending = { original: e.text, translated, session: state.session };
+    const pending = { original: e.text, translated, session: state.session, translationMs };
     state.pending.push(pending);
     const result = await next({ ...e, text: translated });
     if (result.drop) state.pending = state.pending.filter(item => item !== pending);
@@ -316,7 +333,7 @@ export const register: Register = (on, configuredOptions) => {
         const item = state.pending.splice(index, 1)[0]!;
         await saveRecord(hostIO($), state, item.session, e.uuid, {
           v: 1, kind: 'user', chineseSource: 'original', at: await $.clock.now(),
-          blocks: [{ source: item.translated, display: item.original, status: 'ready' }],
+          blocks: [{ source: item.translated, display: item.original, status: 'ready', translationMs: item.translationMs }],
         });
       }
     }
@@ -443,7 +460,7 @@ export const register: Register = (on, configuredOptions) => {
           if (state.originals.has(key)) state.originals.delete(key); else state.originals.add(key);
           $.ui.invalidate('ui.render');
         },
-      }, status,
+      }, status, record,
       block?.status === 'error' ? { key: 'retry-' + key, label: 'Retry translation',
         onPress: async () => {
           await ensureTranslation(io, state, options, ref, true, () => state.view === view);
@@ -510,7 +527,7 @@ export const register: Register = (on, configuredOptions) => {
             if (state.originals.has(key)) state.originals.delete(key); else state.originals.add(key);
             $.ui.invalidate('ui.render');
           },
-        }, status,
+        }, status, record,
         needsWork && record.blocks.some(block => block.status === 'error') ? { key: 'retry-' + key, label: 'Retry translation',
           onPress: async () => {
             await ensureTranslation(hostIO($), state, options, ref, true, () => state.view === view);
