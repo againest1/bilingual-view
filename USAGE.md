@@ -111,7 +111,31 @@ Claude 通过 `AskUserQuestion` 提问时，问题和选项描述可显示中文
 
 ### 失败后如何继续
 
-先运行 `/bilingual-view check` 检查 URL、密钥和模型。请使用能直接返回译文的模型；如果译文仍有本应翻译的中文，可以重试或更换翻译模型。
+输入翻译失败时，提示 **Your message was not submitted（消息未提交）**；在 `AskUserQuestion` 对话框中自行输入的回答则提示 **Your typed answer was not submitted（自行输入的回答未提交）**。
+
+接口报错优先显示服务返回的错误说明；缺少有效说明时，才使用下表的分类提示。
+
+| 提示中的原因或状态码 | 处理建议 |
+| --- | --- |
+| Provider URL / Model ID 未设置，或 URL、密钥格式错误 | 打开 `/bilingual-view settings`，补齐或修正对应字段。 |
+| `HTTP 401` / Authentication failed | 检查 API 密钥、账号访问权限及服务配置的 IP 白名单。 |
+| `HTTP 403` / Access denied | 检查账号权限和服务支持的地区。 |
+| `HTTP 404` / Resource not found | 核对 Provider URL 和 Model ID。 |
+| Credits exhausted / Insufficient quota | 按提示补充余额或检查额度。 |
+| Organization / Project spending limit reached | 调整对应组织或项目的消费上限，或等待额度周期重置。 |
+| Organization usage limit reached | 向服务商申请提高用量上限。 |
+| Rate-limit error / Request rate increased too quickly | 降低请求频率，等待后重试。 |
+| `HTTP 408` / Timed out；`HTTP 409` / Conflict | 稍后重试。 |
+| Failed without an HTTP response | 检查连接和 Provider 设置，再重试。 |
+| `HTTP 400` / `422` | 对照服务的请求要求检查配置。 |
+| Model is temporarily overloaded / `HTTP 5xx` | 稍后重试或查看服务状态。 |
+| Specific cause could not be determined | 根据 HTTP 状态查阅服务的错误说明，或联系服务商。 |
+| Invalid JSON / Incompatible response format | 检查服务的 Chat Completions 接口兼容性。 |
+| Token limit / Empty content / Reasoning tags / Tool call | 按提示检查输出 token 上限，或选择直接返回译文的模型。 |
+| Content filter | 查阅翻译服务的内容政策。 |
+| Model returned a refusal | 查看服务返回的拒绝说明。 |
+| Left Chinese / Could not preserve code, paths or other protected text | 译文未通过检查；重试或更换翻译模型。 |
+| Translation canceled | 本次翻译已取消，需要时重新发送。 |
 
 **单次翻译请求的超时时间为 30 秒（30s），超时也会导致翻译失败。** `/bilingual-view check` 使用简短示例，测试成功并不能排除实际翻译超时；文本较长或服务响应较慢时仍可能触及这个限制。遇到超时可重试，或换用响应更快的翻译模型。
 

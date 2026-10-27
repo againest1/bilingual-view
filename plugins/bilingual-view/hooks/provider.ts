@@ -2,17 +2,18 @@ export type ProviderConfig = { endpoint: string; model: string; apiKey: string }
 export type TranslationCorrection = { text: string; detail: string };
 
 export function providerConfig(base: string, model: string, apiKey: string): ProviderConfig {
-  if (!base.trim() || !model.trim()) throw new Error('Configure the translation Provider URL and model in /plugin first.');
+  if (!base.trim()) throw new Error('Translation Provider URL is not set. Open /bilingual-view settings and enter the Provider URL.');
+  if (!model.trim()) throw new Error('Translation model is not set. Open /bilingual-view settings and enter a Model ID supported by your Provider.');
   let url: URL;
-  try { url = new URL(base.trim()); } catch { throw new Error('The translation Provider URL must be a complete HTTP(S) URL.'); }
+  try { url = new URL(base.trim()); } catch { throw new Error('Invalid translation Provider URL. Open /bilingual-view settings and enter a complete URL starting with http:// or https://.'); }
   if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password || url.hash || url.search) {
-    throw new Error('Provider URLs must use HTTP(S) without credentials, query parameters, or fragments.');
+    throw new Error('Invalid translation Provider URL. Use HTTP(S) without credentials, query parameters, or fragments; put the API key in its separate field in /bilingual-view settings.');
   }
   let path = url.pathname.replace(/\/+$/, '');
   if (!path) path = '/v1';
   if (!path.endsWith('/chat/completions')) path += '/chat/completions';
   url.pathname = path;
-  if (/[\r\n]/.test(apiKey)) throw new Error('API keys cannot contain line breaks.');
+  if (/[\r\n]/.test(apiKey)) throw new Error('The translation API key contains line breaks. Paste it as a single line in /bilingual-view settings.');
   return { endpoint: url.toString(), model: model.trim(), apiKey: apiKey.trim() };
 }
 
@@ -46,20 +47,117 @@ Preserve every BV_LITERAL_<number>_END token (possibly prefixed with underscores
   };
 }
 
-/** Only read visible completion content; never reasoning_content or thinking. */
-export function parseTranslation(response: { ok: boolean; status: number; text: string }): string {
-  if (!response.ok) throw new Error(`Translation service returned HTTP ${response.status}; check settings, quota, or retry later.`);
-  let data: any;
-  try { data = JSON.parse(response.text); } catch { throw new Error('The translation service did not return valid JSON.'); }
-  const choice = data?.choices?.[0];
-  if (!choice || choice.finish_reason === 'length' || choice.finish_reason === 'content_filter' || choice.message?.refusal) {
-    throw new Error('The translation service returned an incomplete translation (truncated, refused, or incompatible response format).');
+function requestFailure(response: { status: number; text: string }): Error {
+  const status = response.status;
+  const prefix = `Translation service returned HTTP ${status}. `;
+  // Prefer the Provider's own explanation, including third-party details.
+  // Without a nonempty string message, use the published OpenAI fallback rules:
+  // https://developers.openai.com/api/reference/typescript#handling-errors
+  // https://developers.openai.com/api/docs/guides/error-codes
+  // Checked 2026-10-27. Keep code/type separate; do not infer causes from prose.
+  let code: string | undefined, type: string | undefined;
+  try {
+    const error = JSON.parse(response.text)?.error;
+    if (typeof error?.message === 'string' && error.message.trim()) {
+      return new Error(prefix + error.message);
+    }
+    if (typeof error?.code === 'string') code = error.code;
+    if (typeof error?.type === 'string') type = error.type;
+  } catch { /* Non-JSON error pages still have a useful HTTP status. */ }
+  let reason = 'The specific cause could not be determined. Check the Provider error details or contact its support.';
+  if (status === 429) {
+    // Specific billing codes take precedence over the broader insufficient_quota type.
+    switch (code) {
+      case 'credit_balance_exhausted':
+        reason = 'Provider credits exhausted. Add credits to your Provider account before retrying.';
+        break;
+      case 'organization_spend_limit_exceeded':
+        reason = 'Organization spending limit reached. Adjust the organization spending limit or wait for it to reset.';
+        break;
+      case 'project_spend_limit_exceeded':
+        reason = 'Project spending limit reached. Adjust the project spending limit or wait for it to reset.';
+        break;
+      case 'organization_usage_limit_exceeded':
+        reason = 'Organization usage limit reached. Request a higher usage limit from the Provider.';
+        break;
+      case 'slow_down':
+        reason = 'The Provider reported that the request rate increased too quickly. Reduce the rate and wait before retrying.';
+        break;
+      default:
+        if (type === 'insufficient_quota') {
+          reason = 'The Provider reported insufficient quota. Check your credits and spending or usage limits before retrying.';
+        } else if (type === 'rate_limit_error') {
+          reason = 'The Provider reported a rate-limit error. Reduce the request rate and wait before retrying.';
+        }
+    }
+  } else if (status === 401) {
+    reason = 'Authentication failed. Check the Provider API key, account access and any configured IP allowlist.';
+  } else if (status === 403) {
+    reason = 'Access denied. Check your account permissions and the Provider supported regions.';
+  } else if (status === 400) {
+    reason = 'Invalid translation request. Check the Provider request requirements and your configuration.';
+  } else if (status === 404) {
+    reason = 'The requested resource was not found. Verify the Provider URL and Model ID in /bilingual-view settings.';
+  } else if (status === 408) {
+    reason = 'The translation request timed out. Wait briefly before retrying.';
+  } else if (status === 409) {
+    reason = 'The request conflicts with the current resource state. Wait briefly before retrying.';
+  } else if (status === 422) {
+    reason = 'The Provider could not process the translation request. Check its request requirements before retrying.';
+  } else if (status === 503 && code === 'server_is_overloaded') {
+    reason = 'The translation model is temporarily overloaded. Wait before retrying or check the Provider service status.';
+  } else if (status >= 500 && status <= 599) {
+    reason = 'The translation service reported a server error. Retry later or check the Provider service status.';
   }
-  const content = choice.message?.content;
+  return new Error(prefix + reason);
+}
+
+/** Chat Completions finish_reason/refusal fields; only read visible content.
+ * https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create
+ */
+export function parseTranslation(response: { ok: boolean; status: number; text: string }): string {
+  if (!response.ok) throw requestFailure(response);
+  let data: any;
+  try { data = JSON.parse(response.text); } catch { throw new Error('The translation service did not return valid JSON. Check the Provider response and Chat Completions compatibility.'); }
+  const choice = Array.isArray(data?.choices) ? data.choices[0] : undefined;
+  if (!choice || typeof choice !== 'object') {
+    throw new Error('The translation response format is incompatible: no completion was returned. Check that the Provider URL and model support Chat Completions.');
+  }
+  if (choice.finish_reason === 'length') {
+    throw new Error('The translation is incomplete: the response reached its token limit (finish_reason=length). Check the model output-token limit before retrying.');
+  }
+  if (choice.finish_reason === 'content_filter') {
+    throw new Error('The Provider content filter omitted translation content (finish_reason=content_filter). Review its content policy before retrying.');
+  }
+  if (typeof choice.message?.refusal === 'string' && choice.message.refusal.trim()) {
+    throw new Error('The model returned a refusal (message.refusal). Check the Provider response details before retrying.');
+  }
+  if (choice.finish_reason === 'tool_calls' || choice.finish_reason === 'function_call') {
+    throw new Error('The model returned a tool call instead of a completed translation. Use a translation model that returns text.');
+  }
+  if (choice.finish_reason !== 'stop') {
+    throw new Error('The translation response format is incompatible: finish_reason is missing or unrecognized. Check the Provider Chat Completions compatibility.');
+  }
+  const message = choice.message;
+  if (!message || typeof message !== 'object' || Array.isArray(message)
+    || (message.refusal != null && typeof message.refusal !== 'string')) {
+    throw new Error('The translation response format is incompatible: invalid completion message. Check the Provider Chat Completions compatibility.');
+  }
+  const content = message.content;
+  // Preserve the existing text-part array support for compatible providers;
+  // unsupported content shapes are format errors, not empty translations.
+  if (content !== null && typeof content !== 'string'
+    && !(Array.isArray(content) && content.every(b => b?.type === 'text' && typeof b.text === 'string'))) {
+    throw new Error('The translation response format is incompatible: unsupported message.content. Check the Provider Chat Completions compatibility.');
+  }
   const text = typeof content === 'string' ? content : Array.isArray(content)
-    ? content.filter(b => b?.type === 'text' && typeof b.text === 'string').map(b => b.text).join('') : '';
-  if (!text.trim() || /<\/?(?:think|thinking|analysis)>/i.test(text)) {
-    throw new Error('The translation service returned empty content or reasoning tags. Choose a model that returns translations directly.');
+    ? content.map(b => b.text).join('') : '';
+  if (!text.trim()) {
+    throw new Error('The translation service returned empty content. Retry or choose a model that returns translations directly in the response content.');
+  }
+  if (/<\/?(?:think|thinking|analysis)>/i.test(text)) {
+    // A plugin translation check, not an OpenAI API error category.
+    throw new Error('The translation contains reasoning tags instead of only the translated text. Choose a model or Provider mode that returns translations without reasoning tags.');
   }
   return text;
 }

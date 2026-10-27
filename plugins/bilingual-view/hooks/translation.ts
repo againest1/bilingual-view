@@ -5,7 +5,13 @@ import { parseTranslation, providerConfig, translationRequest } from './provider
 import type { TranslationCorrection } from './provider.ts';
 
 export function aborted(signal?: AbortSignal): void {
-  if (signal?.aborted) throw new Error('Translation canceled; your message was not submitted.');
+  if (signal?.aborted) throw new Error('Translation canceled. Retry when you are ready.');
+}
+
+export function inputFailure(error: unknown, typedAnswer = false): string {
+  const reason = error instanceof Error && error.message.trim() ? error.message
+    : 'Input translation did not finish. Retry or check the Provider settings with /bilingual-view check.';
+  return (typedAnswer ? 'Your typed answer was not submitted. ' : 'Your message was not submitted. ') + reason;
 }
 
 /** Same sequential translation flow; HTTP and environment access are injected. */
@@ -28,7 +34,12 @@ export async function translate(io: TranslationIO, options: PluginOptions, sourc
       aborted(signal);
       let response;
       try { response = await io.fetch(config.endpoint, translationRequest(config, body, direction, correction)); }
-      catch { throw new Error('Could not connect to the translation service, or the request timed out. Check Provider settings and retry.'); }
+      catch {
+        aborted(signal);
+        // This is the host HTTP API, not the OpenAI SDK. Its thrown values have
+        // no verified error contract, so do not infer a transport cause from them.
+        throw new Error('The translation request failed without an HTTP response. Check the connection and Provider settings, then retry.');
+      }
       aborted(signal);
       return parseTranslation(response).trim();
     };
@@ -46,7 +57,7 @@ export async function translate(io: TranslationIO, options: PluginOptions, sourc
   }
   const translated = pieces.join('');
   if (direction === 'en' && /\p{Script=Han}/u.test(translated)) {
-    throw new Error('The translator still returned Chinese; your message was not submitted. Retry or choose another translation model.');
+    throw new Error('The translator left Chinese in text that should be English. Retry or choose another translation model.');
   }
   return restoreText(translated, protectedText);
 }

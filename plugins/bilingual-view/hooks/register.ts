@@ -3,7 +3,7 @@ import type { RuntimeIO } from './ports.ts';
 import type { DisplayMessageRef, FinalAnswerRef, State, RecordEntry } from './state.ts';
 import { newState, newView } from './state.ts';
 import { finalBlocks, needsTranslation, needsDisplayTranslation, textBlocks, translatedChineseDisplay } from './text.ts';
-import { aborted, translate } from './translation.ts';
+import { aborted, inputFailure, translate } from './translation.ts';
 import { memoryKey, outputWorkKey, readRecord, saveRecord } from './storage.ts';
 import { ensureTranslation, displayRecord, pollVisible, ready } from './tasks.ts';
 import { referenceFor, refreshHistory } from './history.ts';
@@ -241,7 +241,7 @@ export const register: Register = (on, configuredOptions) => {
       });
       translated = await translate(hostIO($), options, e.text, 'en', next.signal);
     }
-    catch (error) { return { drop: error instanceof Error ? error.message : 'Input translation failed; your message was not submitted.' }; }
+    catch (error) { return { drop: inputFailure(error) }; }
     finally {
       next.signal?.removeEventListener('abort', clearStatus);
       clearStatus();
@@ -255,7 +255,7 @@ export const register: Register = (on, configuredOptions) => {
   }).catch(async ($, e, next) => {
     // Do not silently submit Chinese when the translation hook fails.
     if (next.called || !enabled(options)) return next(e);
-    return { drop: 'Input translation did not finish; your message was not submitted. Retry or check settings in /plugin.' };
+    return { drop: inputFailure(undefined) };
   });
 
   on('turn.start', async ($, e, next) => {
@@ -576,8 +576,7 @@ export const register: Register = (on, configuredOptions) => {
       // Omit the host's old ref/text so it maps and stores the translated result.
       return { result: changed.result, ...(result.context ? { context: result.context } : {}) };
     } catch (error) {
-      const reason = error instanceof Error ? error.message : 'Translation failed.';
-      await $.ui.toast('Typed answer not submitted: ' + reason);
+      await $.ui.toast(inputFailure(error, true));
       return { deny: 'Translation of the typed answer failed; it was not submitted. Ask the user again.' };
     }
   });

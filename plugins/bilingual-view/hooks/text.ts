@@ -128,7 +128,7 @@ export function protectText(source: string): ProtectedText {
 export class LiteralIntegrityError extends Error {
   readonly detail: string;
   constructor(detail: string) {
-    super('Translation could not preserve protected text: ' + detail + '. Retry translation.');
+    super('Translation could not preserve code, paths or other protected text: ' + detail + '. Retry translation or choose another translation model.');
     this.name = 'LiteralIntegrityError';
     this.detail = detail;
   }
