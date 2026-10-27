@@ -4,11 +4,11 @@
 
 **中文输入，中文阅读，随时核对原文。**
 
-Claude Code 的双语翻译插件（Mod）。让普通中文提示词以英文提交，<br>
-让符合翻译条件的英文最终回答以中文显示。
+Claude Code 的双语翻译插件（Mod）。用中文提问，自动译成英文发送；<br>
+用中文阅读回答，需要时切回原文。
 
 A Chinese-English translation plugin (Mod) for Claude Code.<br>
-Translate regular Chinese prompts into English, read supported English final replies in Chinese, and view originals.
+Write prompts in Chinese, send them in English, and read replies in Chinese. Switch to the original text anytime.
 
 [快速开始](#快速开始) · [日常使用](#日常使用) · [常见问题](#常见问题) · [完整指南](USAGE.md)
 
@@ -18,12 +18,12 @@ Translate regular Chinese prompts into English, read supported English final rep
 
 <p align="center"><sub>纯自然语言的翻译示例，实际措辞由你选择的翻译模型决定。</sub></p>
 
-- **用中文交流**：翻译普通提示词和提问对话框中自行输入的回答；支持的英文消息可显示中文译文。
+- **用中文交流**：中文提示词和提问对话框中自行输入的中文回答会先译成英文；Claude 的英文回答可显示中文译文。
 - **译好再发送**：需要翻译的输入，译文通过检查才提交；失败时不会自动改发中文原文。
 - **随时对照原文**：查看提示词实际发送的版本，或切回 Claude 的原始回答。
 - **自选翻译服务**：使用兼容 OpenAI Chat Completions 接口的服务，不改变 Claude 会话使用的模型。
 
-> 翻译有明确的[适用范围](#翻译范围)：命令参数、保留文本和其他会话上下文仍可能包含中文。
+> 命令、思考过程和普通工具输出不翻译；代码、路径等内容保持原样。详见[翻译范围](#翻译范围)。
 
 ## 快速开始
 
