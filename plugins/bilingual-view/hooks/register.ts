@@ -227,6 +227,24 @@ async function questionRecord($: EngineInterface, state: State, options: PluginO
   return record;
 }
 
+function questionDrawing($: EngineInterface, e: RenderInput<'AskUserQuestion' | 'ToolUse' | 'ToolResult'>,
+  drawing: RenderElement, record: RecordEntry | null, state: State, options: PluginOptions, view: State['view']): RenderElement {
+  if (!record || ready(record)) return drawing;
+  const { Box, Text, Button } = $.ui.resolve(e);
+  const failed = record.blocks.some(block => block.status === 'error');
+  const controls = [
+    Text({ dimColor: true, children: failed ? 'Question translation failed. You can still use the original text.' : 'Translating questions...' }),
+    ...(failed ? [Button({ key: 'bv-question-retry-' + e.component + ':' + e.requestId, label: 'Retry translation', onPress: async () => {
+      await ensureTranslation(hostIO($), state, options, { kind: 'question', session: view.session,
+        id: questionId(e.requestId), sources: record.blocks.map(block => block.source) }, true,
+      () => state.view === view && enabled(options));
+      if (state.view === view) $.ui.invalidate('ui.render');
+    } })] : []),
+  ];
+  return Box({ flexDirection: 'column', children: e.component === 'AskUserQuestion'
+    ? [...controls, drawing] : [drawing, ...controls] });
+}
+
 
 export const register: Register = (on, configuredOptions) => {
   // Persistence belongs to the host. Update this shared runtime snapshot only
@@ -610,17 +628,7 @@ export const register: Register = (on, configuredOptions) => {
     const record = await questionRecord($, state, options, e.requestId, questions, true);
     if (state.view !== view) return next(e);
     const drawing = await next({ ...e, props: { ...e.props, questions: drawQuestions(questions, record) } });
-    if (!record || ready(record)) return drawing;
-    const { Box, Text, Button } = $.ui.resolve(e);
-    const failed = record.blocks.some(block => block.status === 'error');
-    return Box({ flexDirection: 'column', children: [
-      Text({ dimColor: true, children: failed ? 'Question translation failed. You can still use the original text.' : 'Translating questions...' }),
-      ...(failed ? [Button({ key: 'bv-question-retry', label: 'Retry translation', onPress: async () => {
-        await ensureTranslation(hostIO($), state, options, { kind: 'question', session: view.session,
-          id: questionId(e.requestId), sources: [questionSource(questions)] }, true, () => state.view === view);
-        $.ui.invalidate('ui.render');
-      } })] : []), drawing,
-    ] });
+    return questionDrawing($, e, drawing, record, state, options, view);
   });
 
   on('tool.call', { tool: 'AskUserQuestion' }, async ($, e, next) => {
@@ -652,9 +660,10 @@ export const register: Register = (on, configuredOptions) => {
     const record = await questionRecord($, state, options, e.requestId, input.questions, !!e.props.onScreen);
     const answer = view.session ? await readRecord(hostIO($), state, view.session, answerId(e.requestId)) : null;
     if (state.view !== view) return next(e);
-    return next({ ...e, props: { ...e.props, input: { ...input, questions: drawQuestions(input.questions, record) },
+    const drawing = await next({ ...e, props: { ...e.props, input: { ...input, questions: drawQuestions(input.questions, record) },
       ...(e.props.output && typeof e.props.output === 'object' ? { output: drawQuestionResult(e.props.output as QuestionResult, input.questions, record, answer) } : {}),
     } });
+    return questionDrawing($, e, drawing, record, state, options, view);
   });
 
   on('ui.render', { component: 'ToolResult' }, async ($, e, next) => {
@@ -665,7 +674,8 @@ export const register: Register = (on, configuredOptions) => {
     const record = await questionRecord($, state, options, e.requestId, result.questions, !!e.props.onScreen);
     const answer = view.session ? await readRecord(hostIO($), state, view.session, answerId(e.requestId)) : null;
     if (state.view !== view) return next(e);
-    return next({ ...e, props: { ...e.props, output: drawQuestionResult(result, result.questions, record, answer) } });
+    const drawing = await next({ ...e, props: { ...e.props, output: drawQuestionResult(result, result.questions, record, answer) } });
+    return questionDrawing($, e, drawing, record, state, options, view);
   });
 
   on('command.run', { command: 'bilingual-view' }, async ($, e) => {
