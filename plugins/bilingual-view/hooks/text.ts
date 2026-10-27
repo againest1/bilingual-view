@@ -213,7 +213,7 @@ export function needsDisplayTranslation(text: string): boolean {
 }
 
 /** Lossless boundaries keep long requests within the host's 30s HTTP budget. */
-export function splitText(text: string, limit = 3500): string[] {
+export function splitText(text: string, limit = 1700): string[] {
   const pieces: string[] = [];
   let rest = text;
   while (rest.length > limit) {
