@@ -81,6 +81,7 @@ API key 由 Claude 保存；输入时可见，保存后只显示是否已设置�
 | 切换回中文 | 点击 **Show Chinese（显示中文）**。 |
 | 暂停或恢复翻译 | 点击设置栏的 **On/Off**，或运行 `/bilingual-view off` / `/bilingual-view on`。 |
 | 检查设置与连接 | `/bilingual-view status` 查看设置；`/bilingual-view check` 发送示例翻译请求。 |
+| 查看长文本翻译用时 | 点击 **Test translation speed（测试翻译速度）**，或运行 `/bilingual-view speed`。 |
 
 **关闭翻译后，输入会按原样提交，消息也会显示原文。** 重新开启不会补译已经发送给 Claude 的中文。查看已发送文本是在提交之后，提交前没有译文预览。
 
@@ -115,7 +116,7 @@ API key 由 Claude 保存；输入时可见，保存后只显示是否已设置�
 
 用 `/bilingual-view check` 检查 URL、密钥和模型。Provider URL 应包含服务要求的 API 路径前缀；服务没有模型列表接口时，直接填写 Model ID。
 
-**翻译超时也是失败原因之一：单次翻译请求的超时时间为 30 秒（30s）。** `/bilingual-view check` 只翻译一条简短示例，即使检查正常，实际翻译仍可能因文本较长或服务响应较慢而超时。可重试或换用响应更快的翻译模型。
+**翻译超时也是失败原因之一：单次翻译请求的超时时间为 30 秒（30s）。** `/bilingual-view check` 只翻译一条简短示例，即使检查正常，实际翻译仍可能超时。可用 `/bilingual-view speed` [测试长文本翻译速度](USAGE.md#测试翻译速度)；遇到超时可重试或换用响应更快的翻译模型。
 
 输入翻译失败时不会提交。显示翻译失败时仍可阅读原文，并点击 **Retry translation（重试翻译）**。详见[失败处理](USAGE.md#翻译失败时的处理)。
 

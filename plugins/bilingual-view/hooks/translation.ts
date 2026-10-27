@@ -2,7 +2,7 @@ import type { PluginOptions } from 'claude-code';
 import type { TranslationIO } from './ports.ts';
 import { LiteralIntegrityError, needsTranslation, protectText, restoreText, splitText } from './text.ts';
 import { parseTranslation, providerConfig, translationRequest } from './provider.ts';
-import type { TranslationCorrection } from './provider.ts';
+import type { ProviderConfig, TranslationCorrection } from './provider.ts';
 
 export function aborted(signal?: AbortSignal): void {
   if (signal?.aborted) throw new Error('Translation canceled. Retry when you are ready.');
@@ -22,6 +22,24 @@ function isHostHttpTimeout(error: unknown): boolean {
   return /^[^\r\n]+: \$\.http\.fetch\(https?:\/\/\S+\) aborted: no complete answer within 30000ms$/.test(message);
 }
 
+/** One complete request, shared by normal translation and the unsplit speed test. */
+export async function requestTranslation(io: TranslationIO, config: ProviderConfig, source: string,
+  direction: 'en' | 'zh', signal?: AbortSignal, correction?: TranslationCorrection): Promise<string> {
+  aborted(signal);
+  let response;
+  try { response = await io.fetch(config.endpoint, translationRequest(config, source, direction, correction)); }
+  catch (error) {
+    aborted(signal);
+    if (isHostHttpTimeout(error)) {
+      throw new Error('The translation request timed out (30-second limit). Retry or choose a faster translation model.');
+    }
+    // Other host exceptions have no verified classification here.
+    throw new Error('The translation request failed without an HTTP response. Check the connection and Provider settings, then retry.');
+  }
+  aborted(signal);
+  return parseTranslation(response).trim();
+}
+
 /** Translate up to two chunks at a time per call, preserving source order. */
 export async function translate(io: TranslationIO, options: PluginOptions, source: string, direction: 'en' | 'zh', signal?: AbortSignal): Promise<string> {
   if (!needsTranslation(source, direction)) return source;
@@ -39,21 +57,7 @@ export async function translate(io: TranslationIO, options: PluginOptions, sourc
     const trailing = chunk.match(/\s*$/)?.[0] ?? '';
     const body = chunk.trim();
     if (!body) return chunk;
-    const request = async (correction?: TranslationCorrection): Promise<string> => {
-      aborted(signal);
-      let response;
-      try { response = await io.fetch(config.endpoint, translationRequest(config, body, direction, correction)); }
-      catch (error) {
-        aborted(signal);
-        if (isHostHttpTimeout(error)) {
-          throw new Error('The translation request timed out (30-second limit). Retry or choose a faster translation model.');
-        }
-        // Other host exceptions have no verified classification here.
-        throw new Error('The translation request failed without an HTTP response. Check the connection and Provider settings, then retry.');
-      }
-      aborted(signal);
-      return parseTranslation(response).trim();
-    };
+    const request = (correction?: TranslationCorrection) => requestTranslation(io, config, body, direction, signal, correction);
     let translated = await request();
     const chunkText = { ...protectedText, text: body };
     try { restoreText(translated, chunkText); }

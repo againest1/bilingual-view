@@ -3,7 +3,8 @@ import type { RuntimeIO } from './ports.ts';
 import type { DisplayMessageRef, FinalAnswerRef, State, RecordEntry } from './state.ts';
 import { newState, newView } from './state.ts';
 import { finalBlocks, needsTranslation, needsDisplayTranslation, textBlocks, translatedChineseDisplay } from './text.ts';
-import { aborted, inputFailure, translate } from './translation.ts';
+import { aborted, inputFailure, requestTranslation, translate } from './translation.ts';
+import { TRANSLATION_SPEED_SAMPLE } from './speed-sample.ts';
 import { memoryKey, outputWorkKey, readRecord, saveRecord } from './storage.ts';
 import { ensureTranslation, displayRecord, pollVisible, ready } from './tasks.ts';
 import { referenceFor, refreshHistory } from './history.ts';
@@ -73,6 +74,7 @@ function switchView(state: State, session: string, path?: string): void {
 }
 
 type ModelListing = { models: string[]; loading: boolean; error: string };
+type SpeedTest = { running: boolean };
 
 function messageDrawing($: EngineInterface, e: RenderInput<'UserMessage' | 'AssistantMessage'>,
   drawing: RenderElement, toggle: ButtonProps, status: string, retry?: ButtonProps): RenderElement {
@@ -157,6 +159,35 @@ async function checkProvider($: EngineInterface, options: PluginOptions) {
     await $.ui.toast('Translation Provider connection successful.');
   } catch (error) { await $.ui.toast(error instanceof Error ? error.message : 'Connection test failed.'); }
 }
+async function checkTranslationSpeed($: EngineInterface, options: PluginOptions, test: SpeedTest) {
+  if (test.running) {
+    await $.ui.toast('A translation speed test is already running.');
+    return;
+  }
+  test.running = true;
+  $.ui.invalidate('ui.render');
+  try {
+    const io = hostIO($);
+    const settings = await effectiveSettings(io, options);
+    const config = providerConfig(settings.baseUrl, settings.model, settings.apiKey);
+    await $.ui.toast('Testing translation speed: translating the full English sample into Chinese...');
+    const started = await $.clock.now();
+    // The supplied sample is already prepared for the translation prompt.
+    // Send it verbatim in one request, without splitting, caching or repair retries.
+    const translated = await requestTranslation(io, config, TRANSLATION_SPEED_SAMPLE, 'zh');
+    const seconds = ((await $.clock.now() - started) / 1000).toFixed(2);
+    if (!/\p{Script=Han}/u.test(translated)) {
+      throw new Error('The model did not return a Chinese translation. Retry or choose another translation model.');
+    }
+    await $.ui.toast(`Translation speed test successful. English to Chinese request took ${seconds}s.`);
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : 'The translation request did not complete. Please retry.';
+    await $.ui.toast('Translation speed test failed. ' + reason);
+  } finally {
+    test.running = false;
+    $.ui.invalidate('ui.render');
+  }
+}
 
 async function questionRecord($: EngineInterface, state: State, options: PluginOptions, id: string, questions: Question[], discover: boolean): Promise<RecordEntry | null> {
   const view = state.view;
@@ -186,12 +217,13 @@ export const register: Register = (on, configuredOptions) => {
   const state = newState();
   // Ephemeral UI data only. All settings are written through the host's userConfig.
   const listing: ModelListing = { models: [], loading: false, error: '' };
+  const speedTest: SpeedTest = { running: false };
 
   on('session.start', async ($, e, next) => {
     const session = await $.session.id();
     state.diagnostics.record('session.start', session, '', 'observed', { view: state.view.session });
     if (state.session !== session) switchView(state, session);
-    await $.command.register({ name: 'bilingual-view', description: 'Translation settings, connection test, and diagnostic snapshot', argumentHint: '[status|settings|on|off|check|diagnostics]', immediate: true });
+    await $.command.register({ name: 'bilingual-view', description: 'Translation settings, connection and speed tests, and diagnostic snapshot', argumentHint: '[status|settings|on|off|check|speed|diagnostics]', immediate: true });
     if (!state.pollStarted) {
       state.pollStarted = true;
       $.clock.every(1000, () => enabled(options) ? pollVisible(hostIO($), state, options) : undefined);
@@ -534,7 +566,11 @@ export const register: Register = (on, configuredOptions) => {
         onSubmit: value => saveSetting($, 'model', value.trim()) }),
       Button({ key: 'bv-models', label: listing.loading ? 'Fetching models...' : 'Fetch models', onPress: () => loadModels($, options, listing) }),
       Text({ dimColor: true, children: listing.error || (listing.models.length ? `Fetched ${listing.models.length} models. The list is kept only for this loaded instance.` : 'Fetch models on demand, or enter a model ID manually.') }),
-      Button({ key: 'bv-check', label: 'Test connection', onPress: () => checkProvider($, options) }),
+      Box({ flexDirection: 'row', flexWrap: 'wrap', gap: 1, children: [
+        Button({ key: 'bv-check', label: 'Test connection', onPress: () => checkProvider($, options) }),
+        Button({ key: 'bv-speed', label: speedTest.running ? 'Testing translation speed...' : 'Test translation speed',
+          onPress: () => checkTranslationSpeed($, options, speedTest) }),
+      ] }),
       Button({ key: 'bv-close', label: 'Close settings', onPress: () => $.ui.close({ id: SETTINGS_PANE }) }),
     ] });
   });
@@ -610,6 +646,7 @@ export const register: Register = (on, configuredOptions) => {
     if (arg === 'settings') await openSettings($);
     else if (arg === 'on' || arg === 'off') await saveSetting($, 'enabled', arg === 'on');
     else if (arg === 'check') await checkProvider($, options);
+    else if (arg === 'speed') await checkTranslationSpeed($, options, speedTest);
     else if (arg === 'diagnostics') await exportDiagnostics($, state);
     else {
       const config = await effectiveSettings(hostIO($), options);
