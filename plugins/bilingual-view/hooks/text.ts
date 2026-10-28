@@ -298,7 +298,10 @@ export function splitText(text: string, limit = 1700): string[] {
   while (rest.length > limit) {
     let cut = limit;
     const head = rest.slice(0, limit);
-    const boundary = Math.max(head.lastIndexOf('\n'), head.lastIndexOf('\u3002'), head.lastIndexOf('. '), head.lastIndexOf(' '));
+    // Keep complete lines together before falling back to an in-line boundary.
+    const newline = head.lastIndexOf('\n');
+    const boundary = newline > limit / 2 ? newline
+      : Math.max(head.lastIndexOf('\u3002'), head.lastIndexOf('. '), head.lastIndexOf(' '));
     if (boundary > limit / 2) cut = boundary + 1;
     // Never cut one of our protected literals or a UTF-16 surrogate pair.
     const tokenStart = rest.lastIndexOf('BV_LITERAL_', cut);
