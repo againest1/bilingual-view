@@ -279,6 +279,8 @@ function prose(text: string): string {
 }
 
 export function needsTranslation(text: string, direction: 'en' | 'zh'): boolean {
+  // Removing literals cannot introduce Chinese into an input that has none.
+  if (direction === 'en' && !/\p{Script=Han}/u.test(text)) return false;
   const plain = prose(text);
   return direction === 'en' ? /\p{Script=Han}/u.test(plain) : /[A-Za-z]{2,}/.test(plain);
 }
