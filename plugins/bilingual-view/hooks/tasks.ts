@@ -2,7 +2,7 @@ import type { PluginOptions } from 'claude-code';
 import type { RuntimeIO } from './ports.ts';
 import type { DisplayMessageRef, DisplayTask, MessageIdentity, SessionMessageRef, RecordEntry, State } from './state.ts';
 import { translate } from './translation.ts';
-import { clearOutputWork, memoryKey, outputWorkKey, readRecord, saveRecord, sessionRecordReader } from './storage.ts';
+import { memoryKey, outputWorkKey, readRecord, saveRecord, sessionRecordReader } from './storage.ts';
 import type { RecordReader } from './storage.ts';
 import { referenceFor, refreshHistory } from './history.ts';
 import { needsDisplayTranslation, needsTranslation } from './text.ts';
@@ -141,14 +141,15 @@ async function execute(state: State, task: DisplayTask): Promise<void> {
       block.error = error instanceof Error ? error.message : 'Translation failed. Please retry.';
     }
     task.record.at = await io.now();
-    await saveRecord(io, state, ref.session, outputWorkKey(ref.id), task.record);
-    redraw(state, task);
+    if (!ready(task.record)) {
+      await saveRecord(io, state, ref.session, outputWorkKey(ref.id), task.record);
+      redraw(state, task);
+    }
   }
   const shared = await readRecord(io, state, ref.session, ref.id, true);
   if (matchesRole(shared, ref.kind) && ready(shared)) { task.record = shared; return; }
   if (ready(task.record)) {
-    await saveRecord(io, state, ref.session, ref.id, task.record);
-    await clearOutputWork(io, state, ref.session, ref.id);
+    await saveRecord(io, state, ref.session, ref.id, task.record, true);
   }
 }
 

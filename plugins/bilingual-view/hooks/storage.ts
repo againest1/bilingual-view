@@ -50,23 +50,22 @@ function boundedJson(file: Record<string, unknown>): string {
 }
 
 /** Serialize this instance's file read/modify/write operations, including input saves. */
-function updateFile(io: StorageIO, state: State, session: string, id: string, record?: RecordEntry): Promise<void> {
+function updateFile(io: StorageIO, state: State, session: string, id: string, record: RecordEntry, completeOutput: boolean): Promise<void> {
   const update = state.cacheWrites.then(async () => {
     const path = cacheFilePath(session), key = PREFIX + id;
     // An unfit single record cannot be made to fit by evicting other records.
-    if (record && byteLength(JSON.stringify({ [key]: record })) > CACHE_FILE_MAX_BYTES) {
+    const fits = byteLength(JSON.stringify({ [key]: record })) <= CACHE_FILE_MAX_BYTES;
+    if (!fits) {
       if (record.kind === 'assistant') state.diagnostics.record('cache.write', session, id, 'too_large', {}, true);
       await io.toast('This display cache entry exceeds 4 MiB and was not saved to the session file.');
-      return;
+      if (!completeOutput) return;
     }
     const file = await readFile(io, path);
-    if (record) file[key] = record;
-    else {
-      if (!Object.hasOwn(file, key)) return;
-      delete file[key];
-    }
+    if (fits) file[key] = record;
+    // Replace work before bounding the file, so completion never counts twice.
+    if (completeOutput) delete file[PREFIX + outputWorkKey(id)];
     await io.cacheFiles.write(path, boundedJson(file));
-    if (record?.kind === 'assistant') state.diagnostics.record('cache.write', session, id, 'file_written',
+    if (fits && record.kind === 'assistant') state.diagnostics.record('cache.write', session, id, 'file_written',
       { cache: diagnosticStatus(record) }, true);
   });
   state.cacheWrites = update.catch(() => undefined);
@@ -118,16 +117,13 @@ export async function readRecord(io: StorageIO, state: State, session: string, i
   return rememberRecord(state, session, id, saved);
 }
 
-export async function saveRecord(io: StorageIO, state: State, session: string, id: string, record: RecordEntry): Promise<void> {
+export async function saveRecord(io: StorageIO, state: State, session: string, id: string, record: RecordEntry,
+  completeOutput = false): Promise<void> {
+  if (completeOutput) state.records.delete(memoryKey(session, outputWorkKey(id)));
   state.records.set(memoryKey(session, id), record);
-  try { await updateFile(io, state, session, id, record); }
+  try { await updateFile(io, state, session, id, record, completeOutput); }
   catch {
     if (record.kind === 'assistant') state.diagnostics.record('cache.write', session, id, 'failed', {}, true);
     await io.toast('The display cache could not be saved. It remains available in this session; resuming may show the original text.');
   }
-}
-
-export async function clearOutputWork(io: StorageIO, state: State, session: string, id: string): Promise<void> {
-  state.records.delete(memoryKey(session, outputWorkKey(id)));
-  try { await updateFile(io, state, session, outputWorkKey(id)); } catch {}
 }
