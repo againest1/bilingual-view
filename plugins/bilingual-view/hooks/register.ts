@@ -437,7 +437,7 @@ export const register: Register = (on, configuredOptions) => {
       return next(e);
     }
     if (state.view !== view) return next(e);
-    let needsChinese = needsDisplayTranslation(source);
+    let needsChinese = !ready(record) && needsDisplayTranslation(source);
     if (ready(record) || !needsChinese) view.visible.delete(ref.id);
     else if (onScreen) {
       const visible = view.visible.get(ref.id);
@@ -509,7 +509,8 @@ export const register: Register = (on, configuredOptions) => {
       if (!ref || state.view !== view) { outcome = state.view !== view ? 'view_changed' : 'no_final_reference'; return next(e); }
       record = await displayRecord(hostIO($), state, ref);
       if (state.view !== view) { outcome = 'view_changed'; return next(e); }
-      let needsChinese = needsDisplayTranslation((record?.blocks.map(block => block.source) ?? ref.sources).join('\n\n'));
+      let needsChinese = !ready(record)
+        && needsDisplayTranslation((record?.blocks.map(block => block.source) ?? ref.sources).join('\n\n'));
       if (ready(record) || !needsChinese) view.visible.delete(e.requestId);
       else if (e.props.onScreen) {
         const ensured = await ensureTranslation(hostIO($), state, options, ref, false,

@@ -257,7 +257,8 @@ export function restoreText(translated: string, protectedText: ProtectedText): s
 
 /** Display copies only: repair colon-ended bold headings joined to prose. */
 export function translatedChineseDisplay(source: string): string {
-  if (!source.includes('**')) return source;
+  // Only a colon-ended bold heading touching prose can need a separator.
+  if (!/[:\uff1a]\*\*[\p{L}\p{N}]/u.test(source)) return source;
   const protectedText = protectText(source);
   const { text, prefix, values } = protectedText;
   const token = new RegExp('^' + prefix + '(\\d+)_END');
