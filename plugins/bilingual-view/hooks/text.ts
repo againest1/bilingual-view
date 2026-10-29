@@ -153,6 +153,29 @@ function referenceEnd(source: string, start: number, end: number): number {
   return end;
 }
 
+/** A same-line bold closer belongs to the prose, not the preceding reference. */
+function boldReferenceEnd(source: string, start: number, end: number, before: string): number {
+  const suffix = source.slice(start, end).match(/(?<!\*)\*\*[.:!?]*$/);
+  if (!suffix || escapedAt(source, start + suffix.index!)) return end;
+  const prefix = before.slice(before.lastIndexOf('\n') + 1);
+  const closing = prefix.length + suffix.index!;
+  const line = prefix + source.slice(start, end) + (source[end] ?? ' ');
+  const punctuation = /[\p{P}$+<=>^`|~]/u;
+  let depth = 0;
+  for (const mark of line.matchAll(/(?<!\*)\*\*(?!\*)/g)) {
+    if (mark.index > closing) break;
+    if (escapedAt(line, mark.index)) continue;
+    const previous = line[mark.index - 1] ?? ' ', next = line[mark.index + 2] ?? ' ';
+    const opens = !/\s/.test(next) && (!punctuation.test(next) || /\s/.test(previous) || punctuation.test(previous));
+    const closes = !/\s/.test(previous) && (!punctuation.test(previous) || /\s/.test(next) || punctuation.test(next));
+    if (depth && closes) {
+      if (mark.index === closing) return start + suffix.index!;
+      depth--;
+    } else if (opens) depth++;
+  }
+  return end;
+}
+
 export function protectText(source: string): ProtectedText {
   let prefix = 'BV_LITERAL_';
   while (source.includes(prefix)) prefix = '_' + prefix;
@@ -187,7 +210,13 @@ export function protectText(source: string): ProtectedText {
     else if (group.indented) end = match.index;
     else if (group.ticks) end = inlineCodeEnd(source, match.index, group.ticks) ?? match.index;
     else if (group.math) end = mathEnd(source, match.index, group.math) ?? match.index;
-    else if (group.path || group.mention && !/^@["']/.test(group.mention)) end = referenceEnd(source, match.index, end);
+    else if (group.path || group.mention && !/^@["']/.test(group.mention)) {
+      end = referenceEnd(source, match.index, end);
+      if (source.slice(match.index, end).includes('**')) {
+        // Previously protected code/quotes must not supply a false opener.
+        end = boldReferenceEnd(source, match.index, end, pieces.join('') + source.slice(cursor, match.index));
+      }
+    }
     if (end === match.index) continue;
     const value = source.slice(match.index, end);
     // A whole quoted question/reply is prose, rather than a literal embedded
