@@ -74,12 +74,12 @@ claude plugin install bilingual-view@bilingual-view
 
 ### 3 · 配置翻译服务
 
-点击 **Settings（设置）**，或运行 `/bilingual-view settings`：
+点击 **Settings（设置）**，或运行 `/bilingual-view settings`。填写后按 **Enter** 保存；从列表选择会立即生效：
 
 | 设置项 | 填写内容 |
 | --- | --- |
 | **Provider URL** | 服务的 API 基础地址，例如 `https://provider.example/v1`。也支持完整的 `/chat/completions` 地址，不要填写 `/models` 地址。 |
-| **API key** | 输入密钥并按 **Enter** 保存，成功后立即生效；服务无需身份验证时可不填。 |
+| **API key** | 服务要求的密钥；无需身份验证时可不填。 |
 | **Model ID** | 输入翻译模型标识，或点击 **Fetch models** 从列表选择。 |
 
 需要翻译的文本会发送到这个服务。模型列表不可用时，可直接填写 Model ID。
@@ -92,7 +92,7 @@ API key 由 Claude 保存；输入时可见，保存后只显示是否已设置�
 
 ### 4 · 开始使用
 
-点击 **Test connection（测试连接）**，确认示例翻译成功。该请求发送到你配置的翻译服务，不会成为 Claude 会话中的消息。
+点击 **Test connection（测试连接）**，在设置页确认示例翻译成功。该请求发送到你配置的翻译服务，不会成为 Claude 会话中的消息。
 
 翻译默认开启。确认设置栏为 **On** 后，像平常一样[输入中文提示词](USAGE.md#发送中文提示词)：翻译成功并通过检查后，英文译文会提交给 Claude，界面保留你的中文原文供你阅读。若翻译失败，本次输入不会提交，修正设置或重试即可。
 

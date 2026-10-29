@@ -74,7 +74,19 @@ function switchView(state: State, session: string, path?: string): void {
 }
 
 type ModelListing = { models: string[]; loading: boolean; error: string };
-type SpeedTest = { running: boolean };
+type ProviderTest = { running: boolean; result: string };
+type ProviderTests = { version: number; connection: ProviderTest; speed: ProviderTest };
+
+function clearTestResults(tests: ProviderTests): void {
+  tests.version++;
+  tests.connection.result = '';
+  tests.speed.result = '';
+}
+
+function setupHint(baseUrl: string, model: string): string {
+  const missing = [!baseUrl.trim() && 'Provider URL', !model.trim() && 'Model ID'].filter(Boolean);
+  return missing.length ? `Setup required: enter ${missing.join(' and ')}.` : '';
+}
 
 function translationTiming(record: RecordEntry | null | undefined): string {
   if (!record || !ready(record)) return '';
@@ -88,12 +100,12 @@ function translationTiming(record: RecordEntry | null | undefined): string {
 }
 
 function messageDrawing($: EngineInterface, e: RenderInput<'UserMessage' | 'AssistantMessage'>,
-  drawing: RenderElement, toggle: ButtonProps, status: string, record: RecordEntry | null | undefined,
+  drawing: RenderElement, toggle: ButtonProps | undefined, status: string, record: RecordEntry | null | undefined,
   retry?: ButtonProps): RenderElement {
   const { Box, Button, Text } = $.ui.resolve(e);
   const timing = translationTiming(record);
   // Keep both message controls below the native body in every display mode.
-  const control = Box({ key: 'tail-' + toggle.key, marginLeft: 2, flexShrink: 0,
+  const control = toggle ? Box({ key: 'tail-' + toggle.key, marginLeft: 2, flexShrink: 0,
     alignSelf: 'flex-start', flexDirection: 'row', flexWrap: 'wrap', gap: 2, children: [
       Button({ ...toggle, plain: true, hover: { bold: true },
         // The host's message blue follows light, dark, and automatic themes
@@ -102,22 +114,26 @@ function messageDrawing($: EngineInterface, e: RenderInput<'UserMessage' | 'Assi
       }),
       ...(timing ? [Text({ dimColor: true, children: timing })] : []),
     ],
-  });
+  }) : undefined;
   return Box({ flexDirection: 'column', children: [
-    drawing, control,
+    drawing, ...(control ? [control] : []),
     ...(status ? [Box({ flexDirection: 'row', flexWrap: 'wrap', gap: 2, marginLeft: 2, children: [
       Text({ dimColor: true, children: status }), ...(retry ? [Button({ ...retry, plain: true })] : []),
     ] })] : []),
   ] });
 }
 
-async function saveSetting($: EngineInterface, options: Record<string, PluginOptions[string]>, field: string, value: string | boolean) {
+async function saveSetting($: EngineInterface, options: Record<string, PluginOptions[string]>, tests: ProviderTests,
+  field: string, value: string | boolean) {
   try {
     if (field === 'base_url' && value) providerConfig(String(value), '_', '');
     const result = await $.config.set({ key: $.plugin.name + '.' + field, value });
     if (result.deny) await $.ui.toast(result.deny);
     else {
-      if (result.value !== undefined) options[field] = result.value;
+      if (result.value !== undefined) {
+        if (field !== 'enabled' && options[field] !== result.value) clearTestResults(tests);
+        options[field] = result.value;
+      }
       $.ui.invalidate('ui.render');
     }
   } catch { await $.ui.toast('Settings were not saved. Check this field with /plugin configure.'); }
@@ -171,22 +187,42 @@ async function saveApiKey($: EngineInterface, value: string): Promise<string | u
     await $.ui.toast('API key was not saved. Check that Claude CLI is available, or configure it through /plugin.');
   }
 }
-async function checkProvider($: EngineInterface, options: PluginOptions) {
+async function checkProvider($: EngineInterface, options: PluginOptions, tests: ProviderTests) {
+  const { connection: test, version } = tests;
+  if (test.running) {
+    await $.ui.toast('A connection test is already running.');
+    return;
+  }
+  test.running = true;
+  test.result = '';
+  $.ui.invalidate('ui.render');
+  let result = '';
   try {
-    await translate(hostIO($), options, 'This is a connection test.', 'zh');
-    await $.ui.toast('Translation Provider connection successful.');
-  } catch (error) { await $.ui.toast(error instanceof Error ? error.message : 'Connection test failed.'); }
+    await translate(hostIO($), { ...options }, 'This is a connection test.', 'zh');
+    result = 'Translation Provider connection successful.';
+  } catch (error) { result = 'Connection test failed. ' + (error instanceof Error ? error.message : 'Please retry.'); }
+  finally {
+    test.running = false;
+    // A user can change the model while a test runs. Keep feedback tied to
+    // the settings that were tested, without restarting or issuing requests.
+    if (version === tests.version) test.result = result;
+    $.ui.invalidate('ui.render');
+  }
+  if (version === tests.version) await $.ui.toast(result);
 }
-async function checkTranslationSpeed($: EngineInterface, options: PluginOptions, test: SpeedTest) {
+async function checkTranslationSpeed($: EngineInterface, options: PluginOptions, tests: ProviderTests) {
+  const { speed: test, version } = tests;
   if (test.running) {
     await $.ui.toast('A translation speed test is already running.');
     return;
   }
   test.running = true;
+  test.result = '';
   $.ui.invalidate('ui.render');
+  let result = '';
   try {
     const io = hostIO($);
-    const settings = await effectiveSettings(io, options);
+    const settings = await effectiveSettings(io, { ...options });
     const config = providerConfig(settings.baseUrl, settings.model, settings.apiKey, settings.effort);
     await $.ui.toast('Testing translation speed: translating the full English sample into Chinese...');
     const started = await $.clock.now();
@@ -197,14 +233,16 @@ async function checkTranslationSpeed($: EngineInterface, options: PluginOptions,
     if (!/\p{Script=Han}/u.test(translated)) {
       throw new Error('The model did not return a Chinese translation. Retry or choose another translation model.');
     }
-    await $.ui.toast(`Translation speed test successful. English to Chinese request took ${seconds}s.`);
+    result = `Translation speed test successful. English to Chinese request took ${seconds}s.`;
   } catch (error) {
     const reason = error instanceof Error ? error.message : 'The translation request did not complete. Please retry.';
-    await $.ui.toast('Translation speed test failed. ' + reason);
+    result = 'Translation speed test failed. ' + reason;
   } finally {
     test.running = false;
+    if (version === tests.version) test.result = result;
     $.ui.invalidate('ui.render');
   }
+  if (version === tests.version) await $.ui.toast(result);
 }
 
 async function questionRecord($: EngineInterface, state: State, options: PluginOptions, id: string, questions: Question[], discover: boolean): Promise<RecordEntry | null> {
@@ -253,7 +291,8 @@ export const register: Register = (on, configuredOptions) => {
   const state = newState();
   // Ephemeral UI data only. All settings are written through the host's userConfig.
   const listing: ModelListing = { models: [], loading: false, error: '' };
-  const speedTest: SpeedTest = { running: false };
+  const tests: ProviderTests = { version: 0,
+    connection: { running: false, result: '' }, speed: { running: false, result: '' } };
 
   on('session.start', async ($, e, next) => {
     const session = await $.session.id();
@@ -468,7 +507,7 @@ export const register: Register = (on, configuredOptions) => {
       : block?.status === 'error' ? (block.error || 'Translation failed. Please retry.')
       : state.output.jobs.get(memoryKey(ref.session, ref.id))?.status === 'running' ? 'Translating...' : 'Waiting for translation...';
     return messageDrawing($, e, drawing,
-      { key: 'sent-' + key, label: showSent ? 'Show Chinese' : 'View sent text',
+      block?.status === 'ready' && block.display !== block.source ? { key: 'sent-' + key, label: showSent ? 'Show Chinese' : 'View sent text',
         onPress: () => {
           if (state.view !== view) return;
           // A mounted button already has these contents. Reuse them when
@@ -482,7 +521,7 @@ export const register: Register = (on, configuredOptions) => {
           if (state.originals.has(key)) state.originals.delete(key); else state.originals.add(key);
           $.ui.invalidate('ui.render');
         },
-      }, status, record,
+      } : undefined, status, record,
       block?.status === 'error' ? { key: 'retry-' + key, label: 'Retry translation',
         onPress: async () => {
           await ensureTranslation(io, state, options, ref, true, () => state.view === view);
@@ -545,7 +584,7 @@ export const register: Register = (on, configuredOptions) => {
       const drawing = await next({ ...e, props: { ...e.props, text: display } });
       if (!needsWork && original === chinese) { outcome = 'unchanged'; return drawing; }
       const result = messageDrawing($, e, drawing,
-        { key: 'original-' + key, label: showOriginal ? 'Show Chinese' : 'View original',
+        original !== chinese ? { key: 'original-' + key, label: showOriginal ? 'Show Chinese' : 'View original',
           onPress: () => {
             if (state.view !== view) return;
             const cacheKey = memoryKey(ref.session, ready(record) ? ref.id : outputWorkKey(ref.id));
@@ -553,7 +592,7 @@ export const register: Register = (on, configuredOptions) => {
             if (state.originals.has(key)) state.originals.delete(key); else state.originals.add(key);
             $.ui.invalidate('ui.render');
           },
-        }, status, record,
+        } : undefined, status, record,
         needsWork && record.blocks.some(block => block.status === 'error') ? { key: 'retry-' + key, label: 'Retry translation',
           onPress: async () => {
             await ensureTranslation(hostIO($), state, options, ref, true, () => state.view === view);
@@ -573,16 +612,18 @@ export const register: Register = (on, configuredOptions) => {
     const drawing = await next(e);
     if (e.props.hasSurvey || (e.surface !== 'terminal' && e.surface !== 'desktop')) return drawing;
     const model = String(options.model || await $.env.get('BILINGUAL_VIEW_MODEL') || '').trim();
+    const baseUrl = String(options.base_url || await $.env.get('BILINGUAL_VIEW_BASE_URL') || '');
+    const hint = enabled(options) ? setupHint(baseUrl, model) : 'Translation off: input is sent unchanged.';
     const effort = reasoningEffort(options.effort);
     const { Box, Text, Button } = $.ui.resolve(e);
     return Box({ flexDirection: 'column', children: [Box({ flexDirection: 'row', flexWrap: 'wrap', gap: 1, children: [
       Text({ dimColor: true, children: `Bilingual View · ${model || 'Not set'}(${effort === 'default' ? 'Provider default' : effort})` }),
       Button({ key: 'bv-toggle', label: enabled(options) ? '\u25cf On' : '\u25cb Off', plain: true,
-        onPress: () => saveSetting($, options, 'enabled', !enabled(options)) }),
+        onPress: () => saveSetting($, options, tests, 'enabled', !enabled(options)) }),
       Button({ key: 'bv-settings', label: 'Settings', plain: true, onPress: () => openSettings($) }),
       ...([...state.view.inputTranslations].some(input => input.visible)
         ? [Text({ dimColor: true, children: 'Translating to English...' })] : []),
-    ] }), drawing] });
+    ] }), ...(hint ? [Text({ children: hint })] : []), drawing] });
   });
 
   on('ui.render', { component: 'Pane', requestId: SETTINGS_PANE }, async ($, e, next) => {
@@ -590,35 +631,55 @@ export const register: Register = (on, configuredOptions) => {
     const config = await effectiveSettings(hostIO($), options);
     const { Box, Text, Button, Input, Select } = $.ui.resolve(e);
     const choices = [...new Set([config.model, ...listing.models].filter(Boolean))];
+    const hint = setupHint(config.baseUrl, config.model);
     return Box({ flexDirection: 'column', gap: 1, children: [
-      Button({ key: 'bv-setting-toggle', label: config.enabled ? 'Translation: On' : 'Translation: Off',
-        onPress: () => saveSetting($, options, 'enabled', !config.enabled) }),
-      Text({ dimColor: true, children: 'When off, input is sent unchanged and messages show their original text.' }),
-      Input({ key: 'bv-base-url', label: 'Provider URL', value: config.baseUrl, submitLabel: 'Save',
-        onSubmit: value => saveSetting($, options, 'base_url', value.trim()) }),
-      Input({ key: 'bv-api-key', label: 'API key', value: '', submitLabel: 'Save',
-        placeholder: config.apiKey ? 'Set (enter a new key to replace)' : 'Not set (enter a key)',
-        onSubmit: async value => {
-          const key = await saveApiKey($, value);
-          if (key === undefined) return;
-          options.api_key = key;
-          $.ui.invalidate('ui.render');
-          await $.ui.toast('API key saved.');
-        } }),
-      ...(listing.models.length && choices.length ? [Select({ key: 'bv-model-select', label: 'Select model', value: config.model,
-        options: choices.map(value => ({ value, label: value })), onSelect: value => saveSetting($, options, 'model', value) })] : []),
-      Input({ key: 'bv-model', label: 'Model ID', value: config.model, submitLabel: 'Save',
-        onSubmit: value => saveSetting($, options, 'model', value.trim()) }),
-      Button({ key: 'bv-models', label: listing.loading ? 'Fetching models...' : 'Fetch models', onPress: () => loadModels($, options, listing) }),
-      Text({ dimColor: true, children: listing.error || (listing.models.length ? `Fetched ${listing.models.length} models. The list is kept only for this loaded instance.` : 'Fetch models on demand, or enter a model ID manually.') }),
-      Select({ key: 'bv-effort', label: 'Effort', value: config.effort,
-        options: REASONING_EFFORTS.map(value => ({ value, label: value === 'default' ? 'Provider default' : value })),
-        onSelect: value => saveSetting($, options, 'effort', value) }),
-      Text({ dimColor: true, children: 'Model / Effort tip: Run Test translation speed and prefer a combination that returns the long-text translation within 15s.' }),
-      Box({ flexDirection: 'row', flexWrap: 'wrap', gap: 1, children: [
-        Button({ key: 'bv-check', label: 'Test connection', onPress: () => checkProvider($, options) }),
-        Button({ key: 'bv-speed', label: speedTest.running ? 'Testing translation speed...' : 'Test translation speed',
-          onPress: () => checkTranslationSpeed($, options, speedTest) }),
+      Box({ flexDirection: 'column', children: [
+        Button({ key: 'bv-setting-toggle', label: config.enabled ? 'Translation: On' : 'Translation: Off',
+          onPress: () => saveSetting($, options, tests, 'enabled', !config.enabled) }),
+        ...(!config.enabled ? [Text({ children: 'Input is sent unchanged; messages show their original text.' })] : []),
+        ...(hint ? [Text({ children: hint })] : []),
+        Text({ dimColor: true, children: 'Press Enter to save fields; selections save immediately.' }),
+      ] }),
+      Box({ flexDirection: 'column', children: [
+        Text({ bold: true, children: '1 · Translation service' }),
+        Input({ key: 'bv-base-url', label: 'Provider URL', value: config.baseUrl, submitLabel: 'Save',
+          placeholder: 'https://provider.example/v1',
+          onSubmit: value => saveSetting($, options, tests, 'base_url', value.trim()) }),
+        Input({ key: 'bv-api-key', label: 'API key', value: '', submitLabel: 'Save',
+          placeholder: config.apiKey ? 'Set (enter a new key to replace)' : 'Not set (enter a key)',
+          onSubmit: async value => {
+            const key = await saveApiKey($, value);
+            if (key === undefined) return;
+            if (options.api_key !== key) clearTestResults(tests);
+            options.api_key = key;
+            $.ui.invalidate('ui.render');
+            await $.ui.toast('API key saved.');
+          } }),
+        Text({ dimColor: true, children: 'API key is optional for services without authentication.' }),
+      ] }),
+      Box({ flexDirection: 'column', children: [
+        Text({ bold: true, children: '2 · Translation model' }),
+        Input({ key: 'bv-model', label: 'Model ID', value: config.model, submitLabel: 'Save',
+          onSubmit: value => saveSetting($, options, tests, 'model', value.trim()) }),
+        Button({ key: 'bv-models', label: listing.loading ? 'Fetching models...' : 'Fetch models', onPress: () => loadModels($, options, listing) }),
+        ...(listing.models.length && choices.length ? [Select({ key: 'bv-model-select', label: 'Select model', value: config.model,
+          options: choices.map(value => ({ value, label: value })), onSelect: value => saveSetting($, options, tests, 'model', value) })] : []),
+        Text({ dimColor: true, children: listing.error || (listing.models.length ? `${listing.models.length} models. Select one or enter a Model ID.` : 'Enter a Model ID, or fetch models from your Provider.') }),
+        Select({ key: 'bv-effort', label: 'Effort', value: config.effort,
+          options: REASONING_EFFORTS.map(value => ({ value, label: value === 'default' ? 'Provider default' : value })),
+          onSelect: value => saveSetting($, options, tests, 'effort', value) }),
+      ] }),
+      Box({ flexDirection: 'column', children: [
+        Text({ bold: true, children: '3 · Test and verify' }),
+        Box({ flexDirection: 'row', flexWrap: 'wrap', gap: 1, children: [
+          Button({ key: 'bv-check', label: tests.connection.running ? 'Testing connection...' : 'Test connection',
+            onPress: () => checkProvider($, options, tests) }),
+          Button({ key: 'bv-speed', label: tests.speed.running ? 'Testing translation speed...' : 'Test translation speed',
+            onPress: () => checkTranslationSpeed($, options, tests) }),
+        ] }),
+        ...(tests.connection.result ? [Text({ children: tests.connection.result })] : []),
+        ...(tests.speed.result ? [Text({ children: tests.speed.result })] : []),
+        Text({ dimColor: true, children: 'For long text, prefer a model / effort that finishes within 15s.' }),
       ] }),
       Button({ key: 'bv-close', label: 'Close settings', onPress: () => $.ui.close({ id: SETTINGS_PANE }) }),
     ] });
@@ -685,9 +746,9 @@ export const register: Register = (on, configuredOptions) => {
   on('command.run', { command: 'bilingual-view' }, async ($, e) => {
     const arg = e.args.trim().toLowerCase();
     if (arg === 'settings') await openSettings($);
-    else if (arg === 'on' || arg === 'off') await saveSetting($, options, 'enabled', arg === 'on');
-    else if (arg === 'check') await checkProvider($, options);
-    else if (arg === 'speed') await checkTranslationSpeed($, options, speedTest);
+    else if (arg === 'on' || arg === 'off') await saveSetting($, options, tests, 'enabled', arg === 'on');
+    else if (arg === 'check') await checkProvider($, options, tests);
+    else if (arg === 'speed') await checkTranslationSpeed($, options, tests);
     else if (arg === 'diagnostics') await exportDiagnostics($, state);
     else {
       const config = await effectiveSettings(hostIO($), options);
