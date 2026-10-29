@@ -162,7 +162,9 @@ export function protectText(source: string): ProtectedText {
   // including any other syntax inside it. Link and paste patterns are unchanged.
   const pattern = new RegExp([
     /<pasted_content id="(?<pasteId>[^"\r\n]+)">\r?\n[\s\S]*?\r?\n<\/pasted_content id="\k<pasteId>">(?:\r?\n)?/.source,
-    /^(?<fencePrefix>(?:[ \t]*>[ \t]?|[ \t]*(?:[-+*]|\d+[.)])[ \t]+)* {0,3})(?:(?<backticks>`{3,})(?!`)[^`\r\n]*|(?<tildes>~{3,})(?!~)[^\r\n]*)(?:\r?\n|$)/.source,
+    // Consume quote padding once and all list padding. Letting adjacent
+    // containers borrow that whitespace causes exponential retries without a fence.
+    /^(?<fencePrefix>(?:[ \t]*>(?:[ \t]|(?![ \t]))|[ \t]*(?:[-+*]|\d+[.)])[ \t]+(?![ \t]))* {0,3})(?:(?<backticks>`{3,})(?!`)[^`\r\n]*|(?<tildes>~{3,})(?!~)[^\r\n]*)(?:\r?\n|$)/.source,
     /^(?<indented>(?: {4}| {0,3}\t)[ \t]*)(?=[^ \t\r\n])/.source,
     /(?<ticks>`+)/.source,
     /(?<math>\\[([]|(?<!\$)\${1,2}(?!\$))/.source,
