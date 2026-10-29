@@ -215,7 +215,7 @@ async function questionRecord($: EngineInterface, state: State, options: PluginO
   let record = await displayRecord(io, state, ref);
   if (state.view !== view) return null;
   if (ready(record) || !discover && view.dialog !== ref.id) view.visible.delete(ref.id);
-  else if (discover) {
+  else if (discover && view.visible.get(ref.id)?.kind !== 'question') {
     view.visible.set(ref.id, { kind: 'question', id: ref.id, text: ref.sources[0]! });
     const result = await ensureTranslation(io, state, options, ref, false, () => state.view === view && enabled(options));
     record = result.record ?? record;
@@ -503,6 +503,7 @@ export const register: Register = (on, configuredOptions) => {
         return next(e);
       }
       if (!view.session) { outcome = 'no_session'; return next(e); }
+      const wasVisible = view.visible.get(e.requestId)?.kind === 'assistant';
       if (e.props.onScreen === null) view.visible.delete(e.requestId);
       else if (e.props.onScreen) view.visible.set(e.requestId, { kind: 'assistant', id: e.requestId, text: e.props.text });
       const ref = await referenceFor(hostIO($), state, view, e.requestId);
@@ -512,7 +513,9 @@ export const register: Register = (on, configuredOptions) => {
       let needsChinese = !ready(record)
         && needsDisplayTranslation((record?.blocks.map(block => block.source) ?? ref.sources).join('\n\n'));
       if (ready(record) || !needsChinese) view.visible.delete(e.requestId);
-      else if (e.props.onScreen) {
+      // As with user rows, only discover work on entry. The shared poller
+      // handles recovery; ordinary redraws need no fresh cache read.
+      else if (e.props.onScreen && !wasVisible) {
         const ensured = await ensureTranslation(hostIO($), state, options, ref, false,
           () => state.view === view && view.visible.get(ref.id)?.kind === 'assistant');
         record = ensured.record ?? record;
