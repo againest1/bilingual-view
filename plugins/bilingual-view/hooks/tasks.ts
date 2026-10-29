@@ -62,7 +62,8 @@ export function ensureTranslation(io: RuntimeIO, state: State, options: PluginOp
         ? { ...previous.blocks[i]! } : { source, display: '', status: 'pending' }),
     };
     if (!canAdmit()) return { status: 'obsolete' };
-    const task: DisplayTask = { ref: { id: ref.id, kind: ref.kind, session: ref.session }, record, status: 'queued', io, options };
+    const task: DisplayTask = { ref: { id: ref.id, kind: ref.kind, session: ref.session }, record, status: 'queued', io, options,
+      progress: state.output.progress.get(key) ?? [] };
     state.output.jobs.set(key, task);
     state.output.queue.push(task);
     await saveRecord(io, state, ref.session, outputWorkKey(ref.id), record);
@@ -113,9 +114,15 @@ async function runNext(state: State): Promise<void> {
     }
     await saveRecord(task.io, state, task.ref.session, outputWorkKey(task.ref.id), task.record).catch(() => undefined);
   } finally {
+    const key = memoryKey(task.ref.session, task.ref.id);
+    if (ready(task.record) || !task.progress.some(block => block?.pieces.some(piece => piece !== undefined))) {
+      state.output.progress.delete(key);
+    } else {
+      state.output.progress.set(key, task.progress);
+    }
     if (task.ref.kind === 'assistant') state.diagnostics.record('translation', task.ref.session, task.ref.id,
       diagnosticStatus(task.record), { count: task.record.blocks.length });
-    state.output.jobs.delete(memoryKey(task.ref.session, task.ref.id));
+    state.output.jobs.delete(key);
     state.output.running = false;
     redraw(state, task);
     schedule(state);
@@ -124,7 +131,7 @@ async function runNext(state: State): Promise<void> {
 
 async function execute(state: State, task: DisplayTask): Promise<void> {
   const { io, ref, options } = task;
-  for (const block of task.record.blocks) {
+  for (const [index, block] of task.record.blocks.entries()) {
     // Recheck immediately before work. Another CLI may have finished while
     // this message waited. This is result reuse, not a cross-process lock.
     const shared = await readRecord(io, state, ref.session, ref.id, true);
@@ -132,10 +139,12 @@ async function execute(state: State, task: DisplayTask): Promise<void> {
     if (block.status === 'ready') continue;
     try {
       const started = await io.now();
-      block.display = await translate(io, options, block.source, 'zh');
+      const progress = task.progress[index] ??= { source: block.source, direction: 'zh', pieces: [] };
+      block.display = await translate(io, options, block.source, 'zh', undefined, progress);
       block.translationMs = Math.max(0, await io.now() - started);
       block.status = 'ready';
       delete block.error;
+      delete task.progress[index];
     } catch (error) {
       block.status = 'error';
       block.error = error instanceof Error ? error.message : 'Translation failed. Please retry.';

@@ -3,6 +3,7 @@ import type { PluginOptions } from 'claude-code';
 import type { RuntimeIO } from './ports.ts';
 import { MemoryCache, DISPLAY_CACHE_MAX_ENTRIES, DISPLAY_CACHE_MAX_BYTES } from './memory.ts';
 import { Diagnostics } from './diagnostics.ts';
+import type { TranslationProgress } from './translation.ts';
 
 export type Block = {
   source: string; display: string; status: 'ready' | 'pending' | 'error'; error?: string;
@@ -25,6 +26,7 @@ export type FinalAnswerRef = DisplayMessageRef & { kind: 'assistant' };
 export type DisplayTask = {
   ref: SessionMessageRef; record: RecordEntry; status: 'queued' | 'running';
   io: RuntimeIO; options: PluginOptions;
+  progress: Array<TranslationProgress | undefined>;
 };
 export type View = {
   session: string; path?: string; historyStamp?: string; loadingHistory: boolean;
@@ -49,6 +51,7 @@ export type State = {
   output: {
     jobs: Map<string, DisplayTask>; queue: DisplayTask[]; running: boolean; scheduled: boolean;
     admission: Promise<unknown>;
+    progress: MemoryCache<Array<TranslationProgress | undefined>>;
   };
   view: View;
   pollStarted: boolean;
@@ -62,7 +65,8 @@ export function newState(): State {
     cacheWrites: Promise.resolve(),
     originals: new Set(),
     pending: [], turns: new Map(), activeTurn: null, session: '',
-    output: { jobs: new Map(), queue: [], running: false, scheduled: false, admission: Promise.resolve() },
+    output: { jobs: new Map(), queue: [], running: false, scheduled: false, admission: Promise.resolve(),
+      progress: new MemoryCache(DISPLAY_CACHE_MAX_ENTRIES, DISPLAY_CACHE_MAX_BYTES) },
     view: newView(''), pollStarted: false, polling: false,
   };
 }

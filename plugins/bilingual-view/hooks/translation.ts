@@ -5,6 +5,11 @@ import { parseTranslation, providerConfig, translationRequest } from './provider
 import type { ProviderConfig, TranslationCorrection } from './provider.ts';
 import { effectiveSettings } from './settings.ts';
 
+/** Validated chunks retained only in memory for a display translation's retry. */
+export type TranslationProgress = {
+  source: string; direction: 'en' | 'zh'; pieces: Array<string | undefined>;
+};
+
 export function aborted(signal?: AbortSignal): void {
   if (signal?.aborted) throw new Error('Translation canceled. Retry when you are ready.');
 }
@@ -42,14 +47,20 @@ export async function requestTranslation(io: TranslationIO, config: ProviderConf
 }
 
 /** Translate up to two chunks at a time per call, preserving source order. */
-export async function translate(io: TranslationIO, options: PluginOptions, source: string, direction: 'en' | 'zh', signal?: AbortSignal): Promise<string> {
+export async function translate(io: TranslationIO, options: PluginOptions, source: string, direction: 'en' | 'zh',
+  signal?: AbortSignal, progress?: TranslationProgress): Promise<string> {
   if (!needsTranslation(source, direction)) return source;
   aborted(signal);
   const settings = await effectiveSettings(io, options);
   const config = providerConfig(settings.baseUrl, settings.model, settings.apiKey, settings.effort);
   const protectedText = protectText(source);
   const chunks = splitText(protectedText.text);
-  const pieces: string[] = [];
+  if (progress && (progress.source !== source || progress.direction !== direction)) {
+    progress.source = source;
+    progress.direction = direction;
+    progress.pieces = [];
+  }
+  const pieces = progress?.pieces ?? [];
   const translateChunk = async (chunk: string): Promise<string> => {
     aborted(signal);
     const leading = chunk.match(/^\s*/)?.[0] ?? '';
@@ -73,6 +84,7 @@ export async function translate(io: TranslationIO, options: PluginOptions, sourc
   const worker = async (): Promise<void> => {
     while (!stopped && nextChunk < chunks.length) {
       const index = nextChunk++;
+      if (pieces[index] !== undefined) continue;
       try { pieces[index] = await translateChunk(chunks[index]!); }
       catch (error) { stopped = true; throw error; }
     }
@@ -83,8 +95,27 @@ export async function translate(io: TranslationIO, options: PluginOptions, sourc
   const failure = results.find(result => result.status === 'rejected');
   if (failure?.status === 'rejected') throw failure.reason;
   const translated = pieces.join('');
-  if (direction === 'en' && /\p{Script=Han}/u.test(translated)) {
-    throw new Error('The translator left Chinese in text that should be English. Retry or choose another translation model.');
+  try {
+    if (direction === 'en' && /\p{Script=Han}/u.test(translated)) {
+      throw new Error('The translator left Chinese in text that should be English. Retry or choose another translation model.');
+    }
+    return restoreText(translated, protectedText);
+  } catch (error) {
+    // A chunk can change trailing line/cell boundaries after its last literal,
+    // shifting later chunks despite passing its own check. An end marker finds
+    // those chunks so a retry retains the others without repeating the failure.
+    let discarded = false;
+    if (progress && error instanceof LiteralIntegrityError) {
+      const marker = protectedText.prefix + protectedText.values.length + '_END';
+      const values = [...protectedText.values, ''];
+      for (const [index, chunk] of chunks.entries()) {
+        try { restoreText(pieces[index]! + marker, { ...protectedText, values, text: chunk + marker }); }
+        catch { delete pieces[index]; discarded = true; }
+      }
+    }
+    // If no individual chunk can be trusted as the cause, don't cache a fully
+    // rejected assembly: the next retry must be able to request fresh text.
+    if (!discarded) pieces.length = 0;
+    throw error;
   }
-  return restoreText(translated, protectedText);
 }
