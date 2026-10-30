@@ -141,12 +141,14 @@ function mathEnd(source: string, at: number, open: string): number | undefined {
   return end + close.length;
 }
 
-/** Parentheses/brackets can belong to a path; an unmatched closer belongs outside it. */
-function referenceEnd(source: string, start: number, end: number): number {
+/** Bare references stop at table separators; paths/mentions also stop at unmatched brackets. */
+function referenceEnd(source: string, start: number, end: number, balanceBrackets: boolean): number {
   const pairs: Record<string, string> = { '(': ')', '[': ']', '{': '}' };
   const stack: string[] = [];
   for (let i = start; i < end; i++) {
     const char = source[i]!;
+    if (char === '|' && !escapedAt(source, i)) return i;
+    if (!balanceBrackets) continue;
     if (pairs[char]) stack.push(pairs[char]!);
     else if (')]}'.includes(char) && stack.pop() !== char) return i;
   }
@@ -191,7 +193,7 @@ export function protectText(source: string): ProtectedText {
     /^(?<indented>(?: {4}| {0,3}\t)[ \t]*)(?=[^ \t\r\n])/.source,
     /(?<ticks>`+)/.source,
     /(?<math>\\[([]|(?<!\$)\${1,2}(?!\$))/.source,
-    /https?:\/\/[^\s<>"\uff09)]+|!?\[[^\]\n]*\]\([^\n)]*\)/.source,
+    /(?<url>https?:\/\/[^\s<>"\uff09)]+)|!?\[[^\]\n]*\]\([^\n)]*\)/.source,
     /(?<![A-Za-z0-9_.+-])(?<mention>@(?:"[^"\r\n]+"|'[^'\r\n]+'|[^\s,\uff0c;\uff1b\u3002\uff01\uff1f\u3001\uff1a<>"'\u201c\u201d\u300c\u300d\u300e\u300f`]+))/.source,
     /(?<![A-Za-z0-9_./\\-])(?<path>(?:\.{0,2}\/|~\/|[A-Za-z]:[\\/]|[A-Za-z0-9_.-]+\/)[^\s,\uff0c;\uff1b\u3002\uff01\uff1f\u3001\uff1a<>"'\u201c\u201d\u300c\u300d\u300e\u300f`]+)/.source,
     /(?<![A-Za-z0-9_./\\-])(?:[A-Za-z_][A-Za-z0-9_.-]*\.[A-Za-z0-9_-]+|\.[A-Za-z][A-Za-z0-9_-]*)(?![A-Za-z0-9_-])/.source,
@@ -210,9 +212,9 @@ export function protectText(source: string): ProtectedText {
     else if (group.indented) end = match.index;
     else if (group.ticks) end = inlineCodeEnd(source, match.index, group.ticks) ?? match.index;
     else if (group.math) end = mathEnd(source, match.index, group.math) ?? match.index;
-    else if (group.path || group.mention && !/^@["']/.test(group.mention)) {
-      end = referenceEnd(source, match.index, end);
-      if (source.slice(match.index, end).includes('**')) {
+    else if (group.url || group.path || group.mention && !/^@["']/.test(group.mention)) {
+      end = referenceEnd(source, match.index, end, !group.url);
+      if (!group.url && source.slice(match.index, end).includes('**')) {
         // Previously protected code/quotes must not supply a false opener.
         end = boldReferenceEnd(source, match.index, end, pieces.join('') + source.slice(cursor, match.index));
       }
