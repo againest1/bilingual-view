@@ -191,27 +191,47 @@ function referenceEnd(source: string, start: number, end: number, balanceBracket
   return end;
 }
 
-/** A same-line bold closer belongs to the prose, not the preceding reference. */
-function boldReferenceEnd(source: string, start: number, end: number, before: string): number {
-  const suffix = source.slice(start, end).match(/(?<!\*)\*\*[.:!?]*$/);
-  if (!suffix || escapedAt(source, start + suffix.index!)) return end;
-  const prefix = before.slice(before.lastIndexOf('\n') + 1);
+/** Paired same-line emphasis belongs to the prose, not the enclosed reference. */
+function emphasisReferenceBounds(source: string, start: number, end: number, before: string): [number, number] {
+  const suffix = source.slice(start, end).match(/[*_]+[.:!?]*$/);
+  if (!suffix) return [start, end];
+  const prefix = before.slice(before.lastIndexOf('\n') + 1).replace(/_*BV_LITERAL_\d+_END/g, 'L');
   const closing = prefix.length + suffix.index!;
   const line = prefix + source.slice(start, end) + (source[end] ?? ' ');
   const punctuation = /[\p{P}$+<=>^`|~]/u;
-  let depth = 0;
-  for (const mark of line.matchAll(/(?<!\*)\*\*(?!\*)/g)) {
-    if (mark.index > closing) break;
-    if (escapedAt(line, mark.index)) continue;
-    const previous = line[mark.index - 1] ?? ' ', next = line[mark.index + 2] ?? ' ';
-    const opens = !/\s/.test(next) && (!punctuation.test(next) || /\s/.test(previous) || punctuation.test(previous));
-    const closes = !/\s/.test(previous) && (!punctuation.test(previous) || /\s/.test(next) || punctuation.test(next));
-    if (depth && closes) {
-      if (mark.index === closing) return start + suffix.index!;
-      depth--;
-    } else if (opens) depth++;
+  const openers: Array<{ at: number; char: string; size: number; remaining: number; closes: boolean }> = [];
+  let from = start, to = end;
+  for (const mark of line.matchAll(/\*+|_+/g)) {
+    const at = mark.index + Number(escapedAt(line, mark.index));
+    const size = mark[0].length - (at - mark.index), char = mark[0][0]!;
+    if (!size) continue;
+    // Internal globs and filename underscores are literal. A leading underscore
+    // run can be an opener, since the path pattern also accepts _docs/guide_.
+    if (at > prefix.length && at < closing) continue;
+    const previous = line[at - 1] ?? ' ', next = line[at + size] ?? ' ';
+    const left = !/\s/.test(next) && (!punctuation.test(next) || /\s/.test(previous) || punctuation.test(previous));
+    const right = !/\s/.test(previous) && (!punctuation.test(previous) || /\s/.test(next) || punctuation.test(next));
+    const opens = left && (char === '*' || !right || punctuation.test(previous));
+    const closes = right && (char === '*' || !left || punctuation.test(next));
+    let remaining = size;
+    if (closes) for (let i = openers.length - 1; i >= 0 && remaining; i--) {
+      const opener = openers[i]!;
+      // Runs that can both open and close obey Markdown's rule of three.
+      if (opener.char !== char || (opener.closes || opens) && (opener.size + size) % 3 === 0
+        && (opener.size % 3 !== 0 || size % 3 !== 0)) continue;
+      const used = Math.min(opener.remaining, remaining);
+      opener.remaining -= used;
+      remaining -= used;
+      if (at >= closing) {
+        to = Math.min(to, start + at - prefix.length);
+        if (opener.at === prefix.length) from = start + opener.size;
+      }
+      // Delimiters inside a completed pair cannot close outside that pair.
+      openers.length = opener.remaining ? i + 1 : i;
+    }
+    if (opens && remaining && at < closing) openers.push({ at, char, size, remaining, closes });
   }
-  return end;
+  return [from, to];
 }
 
 type TextSpan = { start: number; end: number };
@@ -348,7 +368,7 @@ export function protectText(source: string): ProtectedText {
   for (let match; (match = pattern.exec(source));) {
     const group = match.groups!;
     if ((group.ticks || group.doubleQuote) && escapedAt(source, match.index)) { pattern.lastIndex = match.index + 1; continue; }
-    let end = pattern.lastIndex;
+    let start = match.index, end = pattern.lastIndex;
     const indent = group.indented || group.fencePrefix || (group.quoted && match[0]);
     const indentedEnd = indent ? indentedCodeEnd(source, match.index, indent, blockEnds) : undefined;
     if (indentedEnd !== undefined) end = indentedEnd;
@@ -358,20 +378,20 @@ export function protectText(source: string): ProtectedText {
     else if (group.math) end = mathEnd(source, match.index, group.math) ?? match.index;
     else if (group.url || group.path || group.mention && !/^@["']/.test(group.mention)) {
       end = referenceEnd(source, match.index, end, !group.url);
-      if (source.slice(match.index, end).includes('**')) {
+      if (/[*_][.:!?]*$/.test(source.slice(start, end))) {
         // Previously protected code/quotes must not supply a false opener.
-        end = boldReferenceEnd(source, match.index, end, pieces.join('') + source.slice(cursor, match.index));
+        [start, end] = emphasisReferenceBounds(source, start, end, pieces.join('') + source.slice(cursor, start));
       }
     }
     if (end === match.index) continue;
-    const value = source.slice(match.index, end);
+    const value = source.slice(start, end);
     // A whole quoted question/reply is prose, rather than a literal embedded
     // in an instruction. Still look inside for explicit files, code or formulas.
     if (source.trim() === value && /^["'\u201c\u300c\u300e]/u.test(value)) { pattern.lastIndex = match.index + 1; continue; }
     if (group.indented || group.quoted || group.backticks || group.tildes || group.pasteId) blockEnds.add(end);
     const index = values.push(value) - 1;
-    spans?.push({ start: match.index, end });
-    pieces.push(source.slice(cursor, match.index), `${prefix}${index}_END`);
+    spans?.push({ start, end });
+    pieces.push(source.slice(cursor, start), `${prefix}${index}_END`);
     cursor = end;
     pattern.lastIndex = end;
   }
