@@ -193,7 +193,7 @@ export function protectText(source: string): ProtectedText {
     /^(?<indented>(?: {4}| {0,3}\t)[ \t]*)(?=[^ \t\r\n])/.source,
     /(?<ticks>`+)/.source,
     /(?<math>\\[([]|(?<!\$)\${1,2}(?!\$))/.source,
-    /(?<url>https?:\/\/[^\s<>"\uff09)]+)|!?\[[^\]\n]*\]\([^\n)]*\)/.source,
+    /(?<url>https?:\/\/[^\s\uff0c\uff1b\u3002\uff01\uff1f\u3001\uff1a<>"\uff09)]+)|!?\[[^\]\n]*\]\([^\n)]*\)/.source,
     /(?<![A-Za-z0-9_.+-])(?<mention>@(?:"[^"\r\n]+"|'[^'\r\n]+'|[^\s,\uff0c;\uff1b\u3002\uff01\uff1f\u3001\uff1a<>"'\u201c\u201d\u300c\u300d\u300e\u300f`]+))/.source,
     /(?<![A-Za-z0-9_./\\-])(?<path>(?:\.{0,2}\/|~\/|[A-Za-z]:[\\/]|[A-Za-z0-9_.-]+\/)[^\s,\uff0c;\uff1b\u3002\uff01\uff1f\u3001\uff1a<>"'\u201c\u201d\u300c\u300d\u300e\u300f`]+)/.source,
     /(?<![A-Za-z0-9_./\\-])(?:[A-Za-z_][A-Za-z0-9_.-]*\.[A-Za-z0-9_-]+|\.[A-Za-z][A-Za-z0-9_-]*)(?![A-Za-z0-9_-])/.source,
@@ -214,7 +214,7 @@ export function protectText(source: string): ProtectedText {
     else if (group.math) end = mathEnd(source, match.index, group.math) ?? match.index;
     else if (group.url || group.path || group.mention && !/^@["']/.test(group.mention)) {
       end = referenceEnd(source, match.index, end, !group.url);
-      if (!group.url && source.slice(match.index, end).includes('**')) {
+      if (source.slice(match.index, end).includes('**')) {
         // Previously protected code/quotes must not supply a false opener.
         end = boldReferenceEnd(source, match.index, end, pieces.join('') + source.slice(cursor, match.index));
       }
