@@ -214,13 +214,118 @@ function boldReferenceEnd(source: string, start: number, end: number, before: st
   return end;
 }
 
+type TextSpan = { start: number; end: number };
+
+/** Read a reference destination and optional title, without consuming following prose. */
+function definitionEnd(source: string, at: number): number | undefined {
+  at += source.slice(at).match(/^[ \t]*(?:\r?\n[ \t]*)?/)![0].length;
+  const start = at, angle = source[at] === '<';
+  let depth = 0;
+  if (angle) at++;
+  for (; at < source.length; at++) {
+    const char = source[at]!;
+    if (char === '\\' && /[!"#$%&'()*+,\-./:;<=>?@[\]\\^_`{|}~]/.test(source[at + 1] ?? '')) { at++; continue; }
+    if (angle) {
+      if (char === '>') { at++; break; }
+      if (char === '<' || /[\r\n]/.test(char)) return;
+    } else {
+      if (/[\s\x00-\x1f]/.test(char)) break;
+      if (char === '(') depth++;
+      else if (char === ')' && --depth < 0) return;
+    }
+  }
+  if (at === start || depth || (angle && source[at - 1] !== '>')) return;
+  const destinationEnd = at;
+  at += source.slice(at).match(/^[ \t]*/)![0].length;
+  const lineEnd = at;
+  const nextLine = /^(?:\r?\n|$)/.test(source.slice(at));
+  if (nextLine) at += source.slice(at).match(/^(?:\r?\n[ \t]*)?/)![0].length;
+  const open = source[at], close = open === '(' ? ')' : open;
+  if (at > destinationEnd && open && '"\'('.includes(open)) {
+    const titleStart = at++;
+    for (; at < source.length; at++) {
+      if (source[at] === '\\' && /[!"#$%&'()*+,\-./:;<=>?@[\]\\^_`{|}~]/.test(source[at + 1] ?? '')) { at++; continue; }
+      if (source[at] === close) {
+        at++;
+        at += source.slice(at).match(/^[ \t]*/)![0].length;
+        if (/^(?:\r?\n|$)/.test(source.slice(at))) return at;
+        break;
+      }
+      if ((open === '(' && source[at] === '(') || /^\r?\n[ \t]*\r?\n/.test(source.slice(at))) break;
+    }
+    if (titleStart <= lineEnd) return;
+  }
+  return nextLine ? lineEnd : undefined;
+}
+
+/** Resolve references after other literals, so definitions inside code cannot create links. */
+function protectReferenceLinks(source: string, spans: TextSpan[], blockEnds: Set<number>,
+  protectedText: ProtectedText): ProtectedText {
+  // Keep offsets and line boundaries while hiding brackets inside existing literals.
+  const mask = (ranges: TextSpan[]) => {
+    const parts: string[] = [];
+    let cursor = 0;
+    for (const { start, end } of ranges) {
+      parts.push(source.slice(cursor, start), source.slice(start, end).replace(/[^\r\n]/g, ' '));
+      cursor = end;
+    }
+    return parts.join('') + source.slice(cursor);
+  };
+  const masked = mask(spans), references: TextSpan[] = [], labels = new Set<string>();
+  const normalize = (label: string) => label.trim().replace(/[ \t\r\n]+/g, ' ').toLowerCase().toUpperCase();
+  const validLabel = (label: string) => /^(?:\\[^\r\n]|[^\[\]\\]){1,999}$/.test(label)
+    && !!label.trim() && !/\r?\n[ \t]*\r?\n/.test(label);
+  const definitions = /^ {0,3}\[((?:\\[^\r\n]|[^\[\]\\]){1,999})\]:/gm;
+  for (let match; (match = definitions.exec(masked));) {
+    const start = match.index;
+    const previousEnd = start ? start - (source[start - 2] === '\r' ? 2 : 1) : 0;
+    const previous = source.slice(source.lastIndexOf('\n', previousEnd - 1) + 1, previousEnd);
+    // A definition may start a block or follow another definition, but cannot interrupt a paragraph.
+    if (start && previous.trim() && !blockEnds.has(previousEnd)
+      && !/^ {0,3}(?:#{1,6}(?:[ \t]|$)|(?:=+|-+|(?:\*[ \t]*){3,}|(?:_[ \t]*){3,})[ \t]*$)/.test(previous)) continue;
+    const labelStart = start + match[0].indexOf('[') + 1;
+    const label = source.slice(labelStart, definitions.lastIndex - 2);
+    if (!validLabel(label)) continue;
+    const end = definitionEnd(source, definitions.lastIndex);
+    if (end === undefined) continue;
+    labels.add(normalize(label));
+    references.push({ start, end });
+    blockEnds.add(end);
+    definitions.lastIndex = end;
+  }
+  if (!labels.size) return protectedText;
+  const links = /!?\[((?:\\[^\r\n]|[^\[\]\\])*)\](?:\[((?:\\[^\r\n]|[^\[\]\\]){0,999})\])?/g;
+  for (let match; (match = links.exec(masked));) {
+    const start = match.index, bracket = start + (match[0][0] === '!' ? 1 : 0);
+    const textEnd = bracket + match[1]!.length + 2;
+    const label = match[2] ? source.slice(textEnd + 1, links.lastIndex - 1) : source.slice(bracket + 1, textEnd - 1);
+    if (escapedAt(source, bracket) || /\r?\n[ \t]*\r?\n/.test(match[0])
+      || !validLabel(label) || !labels.has(normalize(label))) {
+      links.lastIndex = textEnd;
+      continue;
+    }
+    references.push({ start, end: links.lastIndex });
+  }
+  const pieces: string[] = [], values: string[] = [];
+  let cursor = 0;
+  for (const { start, end } of [...spans, ...references].sort((a, b) => a.start - b.start || b.end - a.end)) {
+    if (start < cursor) continue;
+    pieces.push(source.slice(cursor, start), `${protectedText.prefix}${values.length}_END`);
+    values.push(source.slice(start, end));
+    cursor = end;
+  }
+  pieces.push(source.slice(cursor));
+  return { text: pieces.join(''), prefix: protectedText.prefix, values };
+}
+
 export function protectText(source: string): ProtectedText {
   let prefix = 'BV_LITERAL_';
   while (source.includes(prefix)) prefix = '_' + prefix;
   const values: string[] = [];
+  const spans: TextSpan[] | undefined = source.includes(']:') ? [] : undefined;
   const blockEnds = new Set<number>();
   // Match spans on the original source: a paste or code block stays one literal,
-  // including any other syntax inside it. Link and paste patterns are unchanged.
+  // including any other syntax inside it. Reference links are resolved afterwards.
   const pattern = new RegExp([
     /<pasted_content id="(?<pasteId>[^"\r\n]+)">\r?\n[\s\S]*?\r?\n<\/pasted_content id="\k<pasteId>">(?:\r?\n)?/.source,
     // Consume quote padding once and all list padding. Letting adjacent
@@ -265,12 +370,14 @@ export function protectText(source: string): ProtectedText {
     if (source.trim() === value && /^["'\u201c\u300c\u300e]/u.test(value)) { pattern.lastIndex = match.index + 1; continue; }
     if (group.indented || group.quoted || group.backticks || group.tildes || group.pasteId) blockEnds.add(end);
     const index = values.push(value) - 1;
+    spans?.push({ start: match.index, end });
     pieces.push(source.slice(cursor, match.index), `${prefix}${index}_END`);
     cursor = end;
     pattern.lastIndex = end;
   }
   pieces.push(source.slice(cursor));
-  return { text: pieces.join(''), prefix, values };
+  const protectedText = { text: pieces.join(''), prefix, values };
+  return spans ? protectReferenceLinks(source, spans, blockEnds, protectedText) : protectedText;
 }
 
 export class LiteralIntegrityError extends Error {
