@@ -43,17 +43,48 @@ function fenceEnd(source: string, start: number, fence: string, prefix: string):
   return source.length;
 }
 
+/** Measure indentation inside quotes, keeping tab stops relative to the original line. */
+function indentedLine(line: string, depth = Infinity): { line: string; quotes: number } {
+  let column = 0;
+  line = line.replace(/^[ \t>]+/, prefix => [...prefix].map(char => {
+    const width = char === '\t' ? 4 - column % 4 : 1;
+    column += width;
+    return char === '\t' ? ' '.repeat(width) : char;
+  }).join(''));
+  let quotes = 0;
+  for (let quote; quotes < depth && (quote = line.match(/^ {0,3}> ?/)); quotes++) {
+    line = line.slice(quote[0].length);
+  }
+  return { line, quotes };
+}
+
 /** Keep an indented block whole, without treating paragraph/list indentation as code. */
-function indentedCodeEnd(source: string, start: number, indent: string, blockEnds: Set<number>): number | undefined {
+function indentedCodeEnd(source: string, start: number, prefix: string, blockEnds: Set<number>): number | undefined {
+  const context = indentedLine(prefix);
+  const indent = context.line.match(/^[ \t]*/)![0];
+  if (columns(indent) < 4) return;
+  const { quotes } = context;
   const closedBlock = /^[ \t]*(?:#{1,6}(?:[ \t]|$)|(?:=+|-+|(?:\*[ \t]*){3,}|(?:_[ \t]*){3,}|(?:-[ \t]*){3,}|`{3,}|~{3,})[ \t]*$)/;
-  let required = 4, minimum = columns(indent), first = true;
+  let required = 4, minimum = columns(indent), first = true, lazyQuote = false;
   for (let at = start; at > 0;) {
     const end = at - 1;
     at = end > 0 ? source.lastIndexOf('\n', end - 1) + 1 : 0;
-    const line = source.slice(at, end).replace(/\r$/, '');
+    const raw = source.slice(at, end).replace(/\r$/, '');
+    const content = indentedLine(raw, quotes);
+    const { line } = content;
     const blank = /^[ \t]*$/.test(line);
+    const closed = closedBlock.test(line) || blockEnds.has(at + raw.length);
+    if (content.quotes !== quotes) {
+      // Missing > markers can still continue a quoted paragraph or list.
+      // Look back to its explicit quote, stopping at an intervening block.
+      if (blank || closed || /^ {0,3}(?:>|[-+*](?:[ \t]+|$)|1[.)](?:[ \t]+|$)|`{3,}|~{3,})/.test(line)) break;
+      lazyQuote = true;
+      continue;
+    }
+    if (lazyQuote && (blank || closed)) break;
+    lazyQuote = false;
     // Code can follow a blank line or a closed block, but cannot interrupt prose.
-    if (first && !blank && !closedBlock.test(line) && !blockEnds.has(at + line.length)) return;
+    if (first && !blank && !closed) return;
     first = false;
     if (blank) continue;
     const width = columns(line.match(/^[ \t]*/)![0]);
@@ -70,8 +101,10 @@ function indentedCodeEnd(source: string, start: number, indent: string, blockEnd
     if (!list && width < minimum && at > 0) {
       const previousEnd = at - 1;
       const previousStart = previousEnd > 0 ? source.lastIndexOf('\n', previousEnd - 1) + 1 : 0;
-      const previous = source.slice(previousStart, previousEnd).replace(/\r$/, '');
-      if (previous.trim() && !closedBlock.test(previous) && !blockEnds.has(previousStart + previous.length)) continue;
+      const previousRaw = source.slice(previousStart, previousEnd).replace(/\r$/, '');
+      const previous = indentedLine(previousRaw, quotes);
+      if (previous.line.trim() && !closedBlock.test(previous.line)
+        && !blockEnds.has(previousStart + previousRaw.length)) continue;
     }
     minimum = Math.min(minimum, width);
     if (!minimum) break;
@@ -79,10 +112,13 @@ function indentedCodeEnd(source: string, start: number, indent: string, blockEnd
   let end = start;
   for (let at = start; at < source.length;) {
     const newline = source.indexOf('\n', at);
-    const line = source.slice(at, newline < 0 ? source.length : newline).replace(/\r$/, '');
+    const raw = source.slice(at, newline < 0 ? source.length : newline).replace(/\r$/, '');
+    const content = indentedLine(raw, quotes);
+    if (content.quotes !== quotes) break;
+    const { line } = content;
     if (!/^[ \t]*$/.test(line)) {
       if (columns(line.match(/^[ \t]*/)![0]) < required) break;
-      end = at + line.length;
+      end = at + raw.length;
     }
     at = newline < 0 ? source.length : newline + 1;
   }
@@ -191,6 +227,7 @@ export function protectText(source: string): ProtectedText {
     // containers borrow that whitespace causes exponential retries without a fence.
     /^(?<fencePrefix>(?:[ \t]*>(?:[ \t]|(?![ \t]))|[ \t]*(?:[-+*]|\d+[.)])[ \t]+(?![ \t]))* {0,3})(?:(?<backticks>`{3,})(?!`)[^`\r\n]*|(?<tildes>~{3,})(?!~)[^\r\n]*)(?:\r?\n|$)/.source,
     /^(?<indented>(?: {4}| {0,3}\t)[ \t]*)(?=[^ \t\r\n])/.source,
+    /^ {0,3}(?<quoted>>[ \t>]*)(?=[^ \t\r\n])/.source,
     /(?<ticks>`+)/.source,
     /(?<math>\\[([]|(?<!\$)\${1,2}(?!\$))/.source,
     /(?<url>https?:\/\/[^\s\uff0c\uff1b\u3002\uff01\uff1f\u3001\uff1a<>"\uff09)]+)|!?\[[^\]\n]*\]\([^\n)]*\)/.source,
@@ -205,11 +242,11 @@ export function protectText(source: string): ProtectedText {
     const group = match.groups!;
     if (group.ticks && escapedAt(source, match.index)) { pattern.lastIndex = match.index + 1; continue; }
     let end = pattern.lastIndex;
-    const indent = group.indented || group.fencePrefix?.match(/^[ \t]*/)?.[0];
-    const indentedEnd = indent && columns(indent) >= 4 ? indentedCodeEnd(source, match.index, indent, blockEnds) : undefined;
+    const indent = group.indented || group.fencePrefix || (group.quoted && match[0]);
+    const indentedEnd = indent ? indentedCodeEnd(source, match.index, indent, blockEnds) : undefined;
     if (indentedEnd !== undefined) end = indentedEnd;
     else if (group.backticks || group.tildes) end = fenceEnd(source, end, group.backticks || group.tildes!, group.fencePrefix!);
-    else if (group.indented) end = match.index;
+    else if (group.indented || group.quoted) end = match.index;
     else if (group.ticks) end = inlineCodeEnd(source, match.index, group.ticks) ?? match.index;
     else if (group.math) end = mathEnd(source, match.index, group.math) ?? match.index;
     else if (group.url || group.path || group.mention && !/^@["']/.test(group.mention)) {
@@ -224,7 +261,7 @@ export function protectText(source: string): ProtectedText {
     // A whole quoted question/reply is prose, rather than a literal embedded
     // in an instruction. Still look inside for explicit files, code or formulas.
     if (source.trim() === value && /^["'\u201c\u300c\u300e]/u.test(value)) { pattern.lastIndex = match.index + 1; continue; }
-    if (group.indented || group.backticks || group.tildes || group.pasteId) blockEnds.add(end);
+    if (group.indented || group.quoted || group.backticks || group.tildes || group.pasteId) blockEnds.add(end);
     const index = values.push(value) - 1;
     pieces.push(source.slice(cursor, match.index), `${prefix}${index}_END`);
     cursor = end;
