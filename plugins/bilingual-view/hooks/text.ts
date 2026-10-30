@@ -232,8 +232,9 @@ export function protectText(source: string): ProtectedText {
     /(?<math>\\[([]|(?<!\$)\${1,2}(?!\$))/.source,
     /(?<url>https?:\/\/[^\s\uff0c\uff1b\u3002\uff01\uff1f\u3001\uff1a<>"\uff09)]+)|!?\[[^\]\n]*\]\([^\n)]*\)/.source,
     /(?<![A-Za-z0-9_.+-])(?<mention>@(?:"[^"\r\n]+"|'[^'\r\n]+'|[^\s,\uff0c;\uff1b\u3002\uff01\uff1f\u3001\uff1a<>"'\u201c\u201d\u300c\u300d\u300e\u300f`]+))/.source,
-    /(?<![A-Za-z0-9_./\\-])(?<path>(?:\.{0,2}\/|~\/|[A-Za-z]:[\\/]|[A-Za-z0-9_.-]+\/)[^\s,\uff0c;\uff1b\u3002\uff01\uff1f\u3001\uff1a<>"'\u201c\u201d\u300c\u300d\u300e\u300f`]+)/.source,
-    /(?<![A-Za-z0-9_./\\-])(?:[A-Za-z_][A-Za-z0-9_.-]*\.[A-Za-z0-9_-]+|\.[A-Za-z][A-Za-z0-9_-]*)(?![A-Za-z0-9_-])/.source,
+    // Hide Unicode basenames and relative-path prefixes in full, including combining marks.
+    /(?<![\p{L}\p{M}\p{N}_./\\-])(?<path>(?:\.{0,2}\/|~\/|[A-Za-z]:[\\/]|[\p{L}\p{M}\p{N}_.-]+\/)[^\s,\uff0c;\uff1b\u3002\uff01\uff1f\u3001\uff1a<>"'\u201c\u201d\u300c\u300d\u300e\u300f`]+)/u.source,
+    /(?<![\p{L}\p{M}\p{N}_./\\-])(?:[\p{L}_][\p{L}\p{M}\p{N}_.-]*\.[A-Za-z0-9_-]+|\.[A-Za-z][A-Za-z0-9_-]*)(?![A-Za-z0-9_-])/u.source,
     /\u201c[^\u201d\n]*\u201d|\u300c[^\u300d\n]*\u300d|\u300e[^\u300f\n]*\u300f|"[^"\n]*"|(?<![\p{L}\p{N}])'(?:\\.|[^'\\\n])*'(?![\p{L}\p{N}])/u.source,
   ].join('|'), 'gmu');
   const pieces: string[] = [];
