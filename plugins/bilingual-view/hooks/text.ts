@@ -235,13 +235,14 @@ export function protectText(source: string): ProtectedText {
     // Hide Unicode basenames and relative-path prefixes in full, including combining marks.
     /(?<![\p{L}\p{M}\p{N}_./\\-])(?<path>(?:\.{0,2}\/|~\/|[A-Za-z]:[\\/]|[\p{L}\p{M}\p{N}_.-]+\/)[^\s,\uff0c;\uff1b\u3002\uff01\uff1f\u3001\uff1a<>"'\u201c\u201d\u300c\u300d\u300e\u300f`]+)/u.source,
     /(?<![\p{L}\p{M}\p{N}_./\\-])(?:[\p{L}_][\p{L}\p{M}\p{N}_.-]*\.[A-Za-z0-9_-]+|\.[A-Za-z][A-Za-z0-9_-]*)(?![A-Za-z0-9_-])/u.source,
-    /\u201c[^\u201d\n]*\u201d|\u300c[^\u300d\n]*\u300d|\u300e[^\u300f\n]*\u300f|"[^"\n]*"|(?<![\p{L}\p{N}])'(?:\\.|[^'\\\n])*'(?![\p{L}\p{N}])/u.source,
+    /(?<doubleQuote>"(?:\\.|[^"\\\n])*")/.source,
+    /\u201c[^\u201d\n]*\u201d|\u300c[^\u300d\n]*\u300d|\u300e[^\u300f\n]*\u300f|(?<![\p{L}\p{N}])'(?:\\.|[^'\\\n])*'(?![\p{L}\p{N}])/u.source,
   ].join('|'), 'gmu');
   const pieces: string[] = [];
   let cursor = 0;
   for (let match; (match = pattern.exec(source));) {
     const group = match.groups!;
-    if (group.ticks && escapedAt(source, match.index)) { pattern.lastIndex = match.index + 1; continue; }
+    if ((group.ticks || group.doubleQuote) && escapedAt(source, match.index)) { pattern.lastIndex = match.index + 1; continue; }
     let end = pattern.lastIndex;
     const indent = group.indented || group.fencePrefix || (group.quoted && match[0]);
     const indentedEnd = indent ? indentedCodeEnd(source, match.index, indent, blockEnds) : undefined;
