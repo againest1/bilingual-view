@@ -67,7 +67,7 @@ Provider URL 也可以填写完整的 `/chat/completions` 地址，**不要填�
 <details>
 <summary><strong>更新模型列表或更换密钥</strong></summary>
 
-需要更新模型列表时，点击 **Fetch models（获取模型列表）**。
+需要更新模型列表时，点击 **Fetch models（获取模型列表）**。更换服务地址或密钥后，请重新获取列表并选择可用模型，或手动填写新服务支持的 Model ID。
 
 更换密钥时，输入新值并按 **Enter** 保存。留空提交不会删除原有密钥。若无法保存，可运行 `/plugin`，选择本插件的 **Configure（配置）** 填写。
 

@@ -73,9 +73,16 @@ function switchView(state: State, session: string, path?: string): void {
   // Accepted display work belongs to the instance, not the current view.
 }
 
-type ModelListing = { models: string[]; loading: boolean; error: string };
+type ModelListing = { version: number; models: string[]; loading: boolean; error: string };
 type ProviderTest = { running: boolean; result: string };
 type ProviderTests = { version: number; connection: ProviderTest; speed: ProviderTest };
+
+function clearModelListing(listing: ModelListing): void {
+  listing.version++;
+  listing.models = [];
+  listing.loading = false;
+  listing.error = '';
+}
 
 function clearTestResults(tests: ProviderTests): void {
   tests.version++;
@@ -124,7 +131,7 @@ function messageDrawing($: EngineInterface, e: RenderInput<'UserMessage' | 'Assi
 }
 
 async function saveSetting($: EngineInterface, options: Record<string, PluginOptions[string]>, tests: ProviderTests,
-  field: string, value: string | boolean) {
+  listing: ModelListing, field: string, value: string | boolean) {
   try {
     if (field === 'base_url' && value) providerConfig(String(value), '_', '');
     const result = await $.config.set({ key: $.plugin.name + '.' + field, value });
@@ -132,6 +139,7 @@ async function saveSetting($: EngineInterface, options: Record<string, PluginOpt
     else {
       if (result.value !== undefined) {
         if (field !== 'enabled' && options[field] !== result.value) clearTestResults(tests);
+        if (field === 'base_url' && options[field] !== result.value) clearModelListing(listing);
         options[field] = result.value;
       }
       $.ui.invalidate('ui.render');
@@ -143,10 +151,21 @@ async function openSettings($: EngineInterface) {
 }
 async function loadModels($: EngineInterface, options: PluginOptions, listing: ModelListing) {
   if (listing.loading) return;
+  const { version } = listing;
   listing.loading = true; listing.error = ''; $.ui.invalidate('ui.render');
-  try { listing.models = await fetchModels(hostIO($), options); }
-  catch (error) { listing.error = error instanceof Error ? error.message : 'Could not fetch models. You can still enter a model ID manually.'; }
-  finally { listing.loading = false; $.ui.invalidate('ui.render'); }
+  try {
+    const models = await fetchModels(hostIO($), { ...options });
+    if (version === listing.version) listing.models = models;
+  } catch (error) {
+    if (version === listing.version) listing.error = error instanceof Error ? error.message : 'Could not fetch models. You can still enter a model ID manually.';
+  } finally {
+    // A service change allows another fetch immediately. The old request must
+    // not replace its results, report an old error or end its loading state.
+    if (version === listing.version) {
+      listing.loading = false;
+      $.ui.invalidate('ui.render');
+    }
+  }
 }
 async function saveApiKey($: EngineInterface, value: string): Promise<string | undefined> {
   const key = value.trim();
@@ -290,7 +309,7 @@ export const register: Register = (on, configuredOptions) => {
   const options = { ...configuredOptions };
   const state = newState();
   // Ephemeral UI data only. All settings are written through the host's userConfig.
-  const listing: ModelListing = { models: [], loading: false, error: '' };
+  const listing: ModelListing = { version: 0, models: [], loading: false, error: '' };
   const tests: ProviderTests = { version: 0,
     connection: { running: false, result: '' }, speed: { running: false, result: '' } };
 
@@ -619,7 +638,7 @@ export const register: Register = (on, configuredOptions) => {
     return Box({ flexDirection: 'column', children: [Box({ flexDirection: 'row', flexWrap: 'wrap', gap: 1, children: [
       Text({ dimColor: true, children: `Bilingual View · ${model || 'Not set'}(${effort === 'default' ? 'Provider default' : effort})` }),
       Button({ key: 'bv-toggle', label: enabled(options) ? '\u25cf On' : '\u25cb Off', plain: true,
-        onPress: () => saveSetting($, options, tests, 'enabled', !enabled(options)) }),
+        onPress: () => saveSetting($, options, tests, listing, 'enabled', !enabled(options)) }),
       Button({ key: 'bv-settings', label: 'Settings', plain: true, onPress: () => openSettings($) }),
       ...([...state.view.inputTranslations].some(input => input.visible)
         ? [Text({ dimColor: true, children: 'Translating to English...' })] : []),
@@ -635,7 +654,7 @@ export const register: Register = (on, configuredOptions) => {
     return Box({ flexDirection: 'column', gap: 1, children: [
       Box({ flexDirection: 'column', children: [
         Button({ key: 'bv-setting-toggle', label: config.enabled ? 'Translation: On' : 'Translation: Off',
-          onPress: () => saveSetting($, options, tests, 'enabled', !config.enabled) }),
+          onPress: () => saveSetting($, options, tests, listing, 'enabled', !config.enabled) }),
         ...(!config.enabled ? [Text({ children: 'Input is sent unchanged; messages show their original text.' })] : []),
         ...(hint ? [Text({ children: hint })] : []),
         Text({ dimColor: true, children: 'Press Enter to save fields; selections save immediately.' }),
@@ -644,13 +663,16 @@ export const register: Register = (on, configuredOptions) => {
         Text({ bold: true, children: '1 · Translation service' }),
         Input({ key: 'bv-base-url', label: 'Provider URL', value: config.baseUrl, submitLabel: 'Save',
           placeholder: 'https://provider.example/v1',
-          onSubmit: value => saveSetting($, options, tests, 'base_url', value.trim()) }),
+          onSubmit: value => saveSetting($, options, tests, listing, 'base_url', value.trim()) }),
         Input({ key: 'bv-api-key', label: 'API key', value: '', submitLabel: 'Save',
           placeholder: config.apiKey ? 'Set (enter a new key to replace)' : 'Not set (enter a key)',
           onSubmit: async value => {
             const key = await saveApiKey($, value);
             if (key === undefined) return;
-            if (options.api_key !== key) clearTestResults(tests);
+            if (options.api_key !== key) {
+              clearTestResults(tests);
+              clearModelListing(listing);
+            }
             options.api_key = key;
             $.ui.invalidate('ui.render');
             await $.ui.toast('API key saved.');
@@ -660,14 +682,14 @@ export const register: Register = (on, configuredOptions) => {
       Box({ flexDirection: 'column', children: [
         Text({ bold: true, children: '2 · Translation model' }),
         Input({ key: 'bv-model', label: 'Model ID', value: config.model, submitLabel: 'Save',
-          onSubmit: value => saveSetting($, options, tests, 'model', value.trim()) }),
+          onSubmit: value => saveSetting($, options, tests, listing, 'model', value.trim()) }),
         Button({ key: 'bv-models', label: listing.loading ? 'Fetching models...' : 'Fetch models', onPress: () => loadModels($, options, listing) }),
         ...(listing.models.length && choices.length ? [Select({ key: 'bv-model-select', label: 'Select model', value: config.model,
-          options: choices.map(value => ({ value, label: value })), onSelect: value => saveSetting($, options, tests, 'model', value) })] : []),
+          options: choices.map(value => ({ value, label: value })), onSelect: value => saveSetting($, options, tests, listing, 'model', value) })] : []),
         Text({ dimColor: true, children: listing.error || (listing.models.length ? `${listing.models.length} models. Select one or enter a Model ID.` : 'Enter a Model ID, or fetch models from your Provider.') }),
         Select({ key: 'bv-effort', label: 'Effort', value: config.effort,
           options: REASONING_EFFORTS.map(value => ({ value, label: value === 'default' ? 'Provider default' : value })),
-          onSelect: value => saveSetting($, options, tests, 'effort', value) }),
+          onSelect: value => saveSetting($, options, tests, listing, 'effort', value) }),
       ] }),
       Box({ flexDirection: 'column', children: [
         Text({ bold: true, children: '3 · Test and verify' }),
@@ -746,7 +768,7 @@ export const register: Register = (on, configuredOptions) => {
   on('command.run', { command: 'bilingual-view' }, async ($, e) => {
     const arg = e.args.trim().toLowerCase();
     if (arg === 'settings') await openSettings($);
-    else if (arg === 'on' || arg === 'off') await saveSetting($, options, tests, 'enabled', arg === 'on');
+    else if (arg === 'on' || arg === 'off') await saveSetting($, options, tests, listing, 'enabled', arg === 'on');
     else if (arg === 'check') await checkProvider($, options, tests);
     else if (arg === 'speed') await checkTranslationSpeed($, options, tests);
     else if (arg === 'diagnostics') await exportDiagnostics($, state);
