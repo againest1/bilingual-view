@@ -8,7 +8,7 @@ import { TRANSLATION_SPEED_SAMPLE } from './speed-sample.ts';
 import { memoryKey, outputWorkKey, readRecord, saveRecord } from './storage.ts';
 import { ensureTranslation, displayRecord, pollVisible, ready } from './tasks.ts';
 import { referenceFor, refreshHistory } from './history.ts';
-import { effectiveSettings, enabled, fetchModels, SETTINGS_PANE } from './settings.ts';
+import { effectiveSettings, enabled, translateBeforeSend, fetchModels, SETTINGS_PANE } from './settings.ts';
 import { providerConfig, reasoningEffort, REASONING_EFFORTS } from './provider.ts';
 import { questionId, answerId, questionSource, drawQuestions, drawQuestionResult, translateAnswers } from './questions.ts';
 import type { Question, QuestionResult } from './questions.ts';
@@ -138,7 +138,7 @@ async function saveSetting($: EngineInterface, options: Record<string, PluginOpt
     if (result.deny) await $.ui.toast(result.deny);
     else {
       if (result.value !== undefined) {
-        if (field !== 'enabled' && options[field] !== result.value) clearTestResults(tests);
+        if (field !== 'enabled' && field !== 'translate_before_send' && options[field] !== result.value) clearTestResults(tests);
         if (field === 'base_url' && options[field] !== result.value) clearModelListing(listing);
         options[field] = result.value;
       }
@@ -147,7 +147,7 @@ async function saveSetting($: EngineInterface, options: Record<string, PluginOpt
   } catch { await $.ui.toast('Settings were not saved. Check this field with /plugin configure.'); }
 }
 async function openSettings($: EngineInterface) {
-  await $.ui.open({ id: SETTINGS_PANE, title: 'Bilingual View settings', focus: true, closeOnEscape: true, rows: 27, columns: 64 });
+  await $.ui.open({ id: SETTINGS_PANE, title: 'Bilingual View settings', focus: true, closeOnEscape: true, rows: 29, columns: 64 });
 }
 async function loadModels($: EngineInterface, options: PluginOptions, listing: ModelListing) {
   if (listing.loading) return;
@@ -347,7 +347,9 @@ export const register: Register = (on, configuredOptions) => {
   });
 
   on('prompt.submit', async ($, e, next) => {
-    if (!enabled(options) || e.command) return next(e);
+    // Unchanged submissions need no translation record. In particular, a ready
+    // source=display record for English would suppress later Chinese backfill.
+    if (!enabled(options) || !translateBeforeSend(options) || e.command) return next(e);
     if (!await humanOrigin($, e.origin.kind) || /^\s*[!/]/.test(e.text) || !needsTranslation(e.text, 'en')) return next(e);
     const view = state.view;
     const input = { visible: false };
@@ -382,7 +384,7 @@ export const register: Register = (on, configuredOptions) => {
     return result;
   }).catch(async ($, e, next) => {
     // Do not silently submit Chinese when the translation hook fails.
-    if (next.called || !enabled(options)) return next(e);
+    if (next.called || !enabled(options) || !translateBeforeSend(options)) return next(e);
     return { drop: inputFailure(undefined) };
   });
 
@@ -632,13 +634,18 @@ export const register: Register = (on, configuredOptions) => {
     if (e.props.hasSurvey || (e.surface !== 'terminal' && e.surface !== 'desktop')) return drawing;
     const model = String(options.model || await $.env.get('BILINGUAL_VIEW_MODEL') || '').trim();
     const baseUrl = String(options.base_url || await $.env.get('BILINGUAL_VIEW_BASE_URL') || '');
-    const hint = enabled(options) ? setupHint(baseUrl, model) : 'Translation off: input is sent unchanged.';
+    const hint = enabled(options) ? [
+      !translateBeforeSend(options) && 'Input is sent unchanged; Chinese display stays on.', setupHint(baseUrl, model),
+    ].filter(Boolean).join(' ') : 'Translation off: input is sent unchanged.';
     const effort = reasoningEffort(options.effort);
     const { Box, Text, Button } = $.ui.resolve(e);
     return Box({ flexDirection: 'column', children: [Box({ flexDirection: 'row', flexWrap: 'wrap', gap: 1, children: [
       Text({ dimColor: true, children: `Bilingual View · ${model || 'Not set'}(${effort === 'default' ? 'Provider default' : effort})` }),
       Button({ key: 'bv-toggle', label: enabled(options) ? '\u25cf On' : '\u25cb Off', plain: true,
         onPress: () => saveSetting($, options, tests, listing, 'enabled', !enabled(options)) }),
+      ...(enabled(options) ? [Button({ key: 'bv-send-toggle',
+        label: `Translate before send: ${translateBeforeSend(options) ? 'On' : 'Off'}`, plain: true,
+        onPress: () => saveSetting($, options, tests, listing, 'translate_before_send', !translateBeforeSend(options)) })] : []),
       Button({ key: 'bv-settings', label: 'Settings', plain: true, onPress: () => openSettings($) }),
       ...([...state.view.inputTranslations].some(input => input.visible)
         ? [Text({ dimColor: true, children: 'Translating to English...' })] : []),
@@ -655,6 +662,11 @@ export const register: Register = (on, configuredOptions) => {
       Box({ flexDirection: 'column', children: [
         Button({ key: 'bv-setting-toggle', label: config.enabled ? 'Translation: On' : 'Translation: Off',
           onPress: () => saveSetting($, options, tests, listing, 'enabled', !config.enabled) }),
+        ...(config.enabled ? [Button({ key: 'bv-setting-send-toggle',
+          label: `Translate before send: ${config.translateBeforeSend ? 'On' : 'Off'}`,
+          onPress: () => saveSetting($, options, tests, listing, 'translate_before_send', !config.translateBeforeSend) }),
+          ...(!config.translateBeforeSend ? [Text({ children: 'Input is sent unchanged; Chinese display stays on.' })] : []),
+        ] : []),
         ...(!config.enabled ? [Text({ children: 'Input is sent unchanged; messages show their original text.' })] : []),
         ...(hint ? [Text({ children: hint })] : []),
         Text({ dimColor: true, children: 'Press Enter to save fields; selections save immediately.' }),
@@ -723,7 +735,7 @@ export const register: Register = (on, configuredOptions) => {
     const result = await next(e);
     view.visible.delete(questionId(e.tool_use_id));
     if (view.dialog === questionId(e.tool_use_id)) view.dialog = undefined;
-    if (!enabled(options) || result.deny || result.isError || !result.result || !view.session) return result;
+    if (!enabled(options) || !translateBeforeSend(options) || result.deny || result.isError || !result.result || !view.session) return result;
     const io = hostIO($);
     try {
       const old = await readRecord(io, state, view.session, answerId(e.tool_use_id));
@@ -774,7 +786,7 @@ export const register: Register = (on, configuredOptions) => {
     else if (arg === 'diagnostics') await exportDiagnostics($, state);
     else {
       const config = await effectiveSettings(hostIO($), options);
-      await $.ui.toast(`Translation ${config.enabled ? 'On' : 'Off'}; Provider: ${config.baseUrl || 'Not set'}; Model: ${config.model || 'Not set'}; Effort: ${config.effort === 'default' ? 'Provider default' : config.effort}; API key: ${config.apiKey ? 'Set' : 'Not set'}. Settings: /bilingual-view settings`);
+      await $.ui.toast(`Translation ${config.enabled ? 'On' : 'Off'}; Translate before send: ${config.translateBeforeSend ? 'On' : 'Off'}${config.enabled ? '' : ' (inactive)'}; Provider: ${config.baseUrl || 'Not set'}; Model: ${config.model || 'Not set'}; Effort: ${config.effort === 'default' ? 'Provider default' : config.effort}; API key: ${config.apiKey ? 'Set' : 'Not set'}. Settings: /bilingual-view settings`);
     }
     // Returning command text would add it to model context. Use UI-only toasts.
     return {};

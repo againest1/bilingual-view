@@ -6,6 +6,7 @@ import { Diagnostics } from './diagnostics.ts';
 import type { TranslationProgress } from './translation.ts';
 
 export type Block = {
+  /** For user/answer records, source is the actual submitted text, never a guessed English version. */
   source: string; display: string; status: 'ready' | 'pending' | 'error'; error?: string;
   /** Successful translation and validation, including automatic repair; absent in older caches. */
   translationMs?: number;
@@ -14,7 +15,8 @@ export type RecordEntry = {
   v: 1; kind: 'user' | 'assistant' | 'question' | 'answer'; at: number; blocks: Block[];
   /** Tool-answer fields only; selects answers inside one tool call, not message identity. */
   fields?: string[];
-  /** User display only. Missing on legacy v1 user records means original input. */
+  /** User display only: preserved input or later Chinese translation, independent of current settings.
+   * Missing on legacy v1 user records means original input. Unchanged submissions create no input record. */
   chineseSource?: 'original' | 'translation';
 };
 type PendingInput = { original: string; translated: string; session: string; translationMs: number };

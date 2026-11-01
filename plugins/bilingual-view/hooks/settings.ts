@@ -4,6 +4,7 @@ import { providerConfig, reasoningEffort } from './provider.ts';
 
 export const SETTINGS_PANE = 'bilingual-view-settings';
 export const enabled = (options: PluginOptions): boolean => options.enabled !== false;
+export const translateBeforeSend = (options: PluginOptions): boolean => options.translate_before_send !== false;
 
 /** A read of the host options and existing environment fallback, never a settings store. */
 export async function effectiveSettings(io: TranslationIO, options: PluginOptions) {
@@ -13,6 +14,7 @@ export async function effectiveSettings(io: TranslationIO, options: PluginOption
     effort: reasoningEffort(options.effort),
     apiKey: String(options.api_key || await io.env.apiKey() || ''),
     enabled: enabled(options),
+    translateBeforeSend: translateBeforeSend(options),
   };
 }
 

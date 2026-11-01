@@ -35,7 +35,13 @@
     "enabled": {
       "type": "boolean",
       "title": "Translation enabled",
-      "description": "When enabled, Chinese input is submitted in English and messages can display Chinese. When disabled, input and display remain unchanged.",
+      "description": "Enable Chinese message display and the Translate before send setting. When disabled, input and display remain unchanged.",
+      "default": true
+    },
+    "translate_before_send": {
+      "type": "boolean",
+      "title": "Translate before send",
+      "description": "When Translation is enabled, translate Chinese prompts and typed question answers into English before submitting. Turn off to submit input unchanged while keeping Chinese display and English-message backfill.",
       "default": true
     }
   }
