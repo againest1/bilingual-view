@@ -84,7 +84,7 @@ claude plugin install bilingual-view@bilingual-view
 
 需要翻译的文本会发送到这个服务。模型列表不可用时，可直接填写 Model ID。
 
-保存后，可在输入框上方的设置栏核对翻译模型和思考强度，例如 `Bilingual View · my-model(low)`。
+保存后，可在输入框上方设置栏的末尾核对翻译模型和思考强度，例如 `my-model (low)`。
 
 默认使用 `low` [思考强度](USAGE.md#设置思考强度)。若服务不支持此参数，可在 **Effort** 中选择 **Provider default（服务默认）**。
 

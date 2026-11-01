@@ -639,16 +639,24 @@ export const register: Register = (on, configuredOptions) => {
     ].filter(Boolean).join(' ') : 'Translation off: input is sent unchanged.';
     const effort = reasoningEffort(options.effort);
     const { Box, Text, Button } = $.ui.resolve(e);
-    return Box({ flexDirection: 'column', children: [Box({ flexDirection: 'row', flexWrap: 'wrap', gap: 1, children: [
-      Text({ dimColor: true, children: `Bilingual View · ${model || 'Not set'}(${effort === 'default' ? 'Provider default' : effort})` }),
-      Button({ key: 'bv-toggle', label: enabled(options) ? '\u25cf On' : '\u25cb Off', plain: true,
-        onPress: () => saveSetting($, options, tests, listing, 'enabled', !enabled(options)) }),
-      ...(enabled(options) ? [Button({ key: 'bv-send-toggle',
-        label: `Translate before send: ${translateBeforeSend(options) ? 'On' : 'Off'}`, plain: true,
-        onPress: () => saveSetting($, options, tests, listing, 'translate_before_send', !translateBeforeSend(options)) })] : []),
-      Button({ key: 'bv-settings', label: 'Settings', plain: true, onPress: () => openSettings($) }),
+    const control = (props: ButtonProps, color: 'success' | 'warning' | 'briefLabelYou') => Box({
+      key: 'control-' + props.key, flexShrink: 0, children: Button({
+        ...props, plain: true, hover: { bold: true },
+        children: Text({ color, children: `[${props.label}]` }),
+      }),
+    });
+    return Box({ flexDirection: 'column', children: [Box({ flexDirection: 'row', flexWrap: 'wrap', gap: 2, children: [
+      Text({ dimColor: true, children: 'Bilingual View' }),
+      control({ key: 'bv-toggle', label: enabled(options) ? '\u25cf On' : '\u25cb Off',
+        onPress: () => saveSetting($, options, tests, listing, 'enabled', !enabled(options)) }, enabled(options) ? 'success' : 'warning'),
+      ...(enabled(options) ? [control({ key: 'bv-send-toggle',
+        label: `Translate before send: ${translateBeforeSend(options) ? 'On' : 'Off'}`,
+        onPress: () => saveSetting($, options, tests, listing, 'translate_before_send', !translateBeforeSend(options)) },
+        translateBeforeSend(options) ? 'success' : 'warning')] : []),
+      control({ key: 'bv-settings', label: 'Settings', onPress: () => openSettings($) }, 'briefLabelYou'),
       ...([...state.view.inputTranslations].some(input => input.visible)
-        ? [Text({ dimColor: true, children: 'Translating to English...' })] : []),
+        ? [Text({ color: 'warning', children: 'Translating to English...' })] : []),
+      Text({ dimColor: true, children: `${model || 'Not set'} (${effort === 'default' ? 'Provider default' : effort})` }),
     ] }), ...(hint ? [Text({ children: hint })] : []), drawing] });
   });
 

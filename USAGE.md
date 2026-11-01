@@ -45,7 +45,7 @@ claude plugin install bilingual-view@bilingual-view
 
 Provider URL 也可以填写完整的 `/chat/completions` 地址，**不要填写 `/models` 地址**。模型列表不可用时，直接填写 Model ID 即可。
 
-保存后，可在输入框上方的设置栏核对模型和思考强度，例如 `Bilingual View · my-model(low)`。看到 **Setup required（需要配置）** 时，请打开设置，补齐提示中列出的 **Provider URL** 或 **Model ID**。
+保存后，可在输入框上方设置栏的末尾核对模型和思考强度，例如 `my-model (low)`。看到 **Setup required（需要配置）** 时，请打开设置，补齐提示中列出的 **Provider URL** 或 **Model ID**。
 
 ### 设置思考强度
 
