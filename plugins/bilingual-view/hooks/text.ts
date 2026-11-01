@@ -164,6 +164,40 @@ function escapedAt(source: string, at: number): boolean {
   return count % 2 !== 0;
 }
 
+/** Recognize a pipe-table header or contiguous pipe rows after its delimiter. */
+function inPipeTable(source: string, at: number): boolean {
+  const start = source.lastIndexOf('\n', at - 1) + 1;
+  const end = source.indexOf('\n', at);
+  const quotes = indentedLine(source.slice(start, at)).quotes;
+  const content = (line: string) => {
+    const parsed = indentedLine(line);
+    return parsed.quotes === quotes ? parsed.line.trim() : '';
+  };
+  const delimiter = (line: string) => /^\|?[ \t]*:?-+:?[ \t]*(?:\|[ \t]*:?-+:?[ \t]*)*\|?$/.test(line)
+    && line.includes('|');
+  const cells = (line: string) => [...line.matchAll(/\|/g)].filter(m => !escapedAt(line, m.index)).length
+    + 1 - Number(line.startsWith('|')) - Number(line.endsWith('|') && !escapedAt(line, line.length - 1));
+  const block = (line: string) => /^(?:#{1,6}(?:[ \t]|$)|>|[-+*](?:[ \t]+|$)|\d+[.)](?:[ \t]+|$)|`{3,}|~{3,})/.test(line);
+  const row = content(source.slice(start, end < 0 ? source.length : end));
+  if (block(row)) return false;
+  if (end >= 0) {
+    const nextEnd = source.indexOf('\n', end + 1);
+    const next = content(source.slice(end + 1, nextEnd < 0 ? source.length : nextEnd));
+    if (delimiter(next)) return cells(row) === cells(next);
+  }
+  for (let to = start; to > 0;) {
+    const from = source.lastIndexOf('\n', to - 2) + 1;
+    const line = content(source.slice(from, to - 1));
+    if (delimiter(line)) {
+      const header = content(source.slice(source.lastIndexOf('\n', from - 2) + 1, from - 1));
+      return from > 0 && !!header && !block(header) && cells(header) === cells(line);
+    }
+    if (!line.includes('|') || block(line)) return false;
+    to = from;
+  }
+  return false;
+}
+
 /** Common math delimiters only; leave unmatched/escaped delimiters and prices as prose. */
 function mathEnd(source: string, at: number, open: string): number | undefined {
   if (escapedAt(source, at)) return;
@@ -174,6 +208,9 @@ function mathEnd(source: string, at: number, open: string): number | undefined {
   if (end < 0) return;
   if (open === '$' && (/\s/.test(source[end - 1] ?? '') || /\d|\$/.test(source[end + 1] ?? '')
     || source.slice(at, end).includes('\n'))) return;
+  // Currency signs in neighboring cells are not a paired formula. Escaped
+  // pipes remain valid formula contents, as do ordinary math pipes outside tables.
+  if (open === '$' && referenceEnd(source, at, end, false) < end && inPipeTable(source, at)) return;
   return end + close.length;
 }
 
