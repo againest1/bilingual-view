@@ -1,162 +1,8 @@
+import { markdownSpans } from './markdown.ts';
+import type { Literal, MarkdownSpans, Span } from './markdown.ts';
+
 /** Pure text helpers. No Claude or network access. */
 export type ProtectedText = { text: string; prefix: string; values: string[] };
-
-function unquoteLine(line: string, indents: number[]): string | undefined {
-  for (const indent of indents) {
-    const quote = line.match(/^([ \t]*)>[ \t]?/);
-    if (!quote || columns(quote[1]!) < indent) return undefined;
-    line = line.slice(quote[0].length);
-  }
-  return line;
-}
-
-function columns(text: string): number {
-  let width = 0;
-  for (const char of text) width += char === '\t' ? 4 - width % 4 : 1;
-  return width;
-}
-
-/** Find a code fence's own closer, including quoted/list containers and longer closers. */
-function fenceEnd(source: string, start: number, fence: string, prefix: string): number {
-  const lists = /(?:[-+*]|\d+[.)])[ \t]+/g;
-  const listIndent = (part: string) => /(?:[-+*]|\d+[.)])[ \t]+/.test(part)
-    ? columns(part.replace(lists, marker => ' '.repeat(columns(marker)))) : 0;
-  const quoteIndents: number[] = [];
-  for (let quote; (quote = prefix.indexOf('>')) >= 0;) {
-    quoteIndents.push(listIndent(prefix.slice(0, quote)));
-    prefix = prefix.slice(quote + 1).replace(/^[ \t]/, '');
-  }
-  const indent = listIndent(prefix);
-  for (let at = start; at < source.length;) {
-    const newline = source.indexOf('\n', at);
-    const end = newline < 0 ? source.length : newline;
-    const raw = source.slice(at, end).replace(/\r$/, '');
-    const line = unquoteLine(raw, quoteIndents);
-    if (line === undefined || (indent && line.trim() && columns(line.match(/^[ \t]*/)![0]) < indent)) {
-      return at - (source[at - 2] === '\r' ? 2 : 1);
-    }
-    const closing = line.match(/^([ \t]*)(`+|~+)[ \t]*$/);
-    if (closing && columns(closing[1]!) - indent <= 3
-      && closing[2]![0] === fence[0] && closing[2]!.length >= fence.length) return at + raw.length;
-    at = newline < 0 ? source.length : newline + 1;
-  }
-  return source.length;
-}
-
-/** Measure indentation inside quotes, keeping tab stops relative to the original line. */
-function indentedLine(line: string, depth = Infinity): { line: string; quotes: number } {
-  let column = 0;
-  line = line.replace(/^[ \t>]+/, prefix => [...prefix].map(char => {
-    const width = char === '\t' ? 4 - column % 4 : 1;
-    column += width;
-    return char === '\t' ? ' '.repeat(width) : char;
-  }).join(''));
-  let quotes = 0;
-  for (let quote; quotes < depth && (quote = line.match(/^ {0,3}> ?/)); quotes++) {
-    line = line.slice(quote[0].length);
-  }
-  return { line, quotes };
-}
-
-/** Keep an indented block whole, without treating paragraph/list indentation as code. */
-function indentedCodeEnd(source: string, start: number, prefix: string, blockEnds: Set<number>): number | undefined {
-  const context = indentedLine(prefix);
-  const indent = context.line.match(/^[ \t]*/)![0];
-  if (columns(indent) < 4) return;
-  const { quotes } = context;
-  const closedBlock = /^[ \t]*(?:#{1,6}(?:[ \t]|$)|(?:=+|-+|(?:\*[ \t]*){3,}|(?:_[ \t]*){3,}|(?:-[ \t]*){3,}|`{3,}|~{3,})[ \t]*$)/;
-  let required = 4, minimum = columns(indent), first = true, lazyQuote = false;
-  for (let at = start; at > 0;) {
-    const end = at - 1;
-    at = end > 0 ? source.lastIndexOf('\n', end - 1) + 1 : 0;
-    const raw = source.slice(at, end).replace(/\r$/, '');
-    const content = indentedLine(raw, quotes);
-    const { line } = content;
-    const blank = /^[ \t]*$/.test(line);
-    const closed = closedBlock.test(line) || blockEnds.has(at + raw.length);
-    if (content.quotes !== quotes) {
-      // Missing > markers can still continue a quoted paragraph or list.
-      // Look back to its explicit quote, stopping at an intervening block.
-      if (blank || closed || /^ {0,3}(?:>|[-+*](?:[ \t]+|$)|1[.)](?:[ \t]+|$)|`{3,}|~{3,})/.test(line)) break;
-      lazyQuote = true;
-      continue;
-    }
-    if (lazyQuote && (blank || closed)) break;
-    lazyQuote = false;
-    // Code can follow a blank line or a closed block, but cannot interrupt prose.
-    if (first && !blank && !closed) return;
-    first = false;
-    if (blank) continue;
-    const width = columns(line.match(/^[ \t]*/)![0]);
-    const list = line.match(/^([ \t]*)([-+*]|\d+[.)])([ \t]+)/);
-    if (list && width < minimum) {
-      const markerWidth = columns(list[1]! + list[2]!);
-      const contentIndent = columns(list[0]);
-      const padding = contentIndent - markerWidth;
-      const listIndent = markerWidth + (padding > 4 ? 1 : padding);
-      if (listIndent <= minimum) { required += listIndent; break; }
-    }
-    // A list paragraph may continue without indentation. Only an actual block
-    // boundary, rather than that lazy continuation, can end its list context.
-    if (!list && width < minimum && at > 0) {
-      const previousEnd = at - 1;
-      const previousStart = previousEnd > 0 ? source.lastIndexOf('\n', previousEnd - 1) + 1 : 0;
-      const previousRaw = source.slice(previousStart, previousEnd).replace(/\r$/, '');
-      const previous = indentedLine(previousRaw, quotes);
-      if (previous.line.trim() && !closedBlock.test(previous.line)
-        && !blockEnds.has(previousStart + previousRaw.length)) continue;
-    }
-    minimum = Math.min(minimum, width);
-    if (!minimum) break;
-  }
-  let end = start;
-  for (let at = start; at < source.length;) {
-    const newline = source.indexOf('\n', at);
-    const raw = source.slice(at, newline < 0 ? source.length : newline).replace(/\r$/, '');
-    const content = indentedLine(raw, quotes);
-    if (content.quotes !== quotes) break;
-    const { line } = content;
-    if (!/^[ \t]*$/.test(line)) {
-      if (columns(line.match(/^[ \t]*/)![0]) < required) break;
-      end = at + raw.length;
-    }
-    at = newline < 0 ? source.length : newline + 1;
-  }
-  // Interior blank lines belong to the literal; trailing ones remain separators.
-  return end > start ? end : undefined;
-}
-
-function inlineCodeEnd(source: string, start: number, ticks: string): number | undefined {
-  const prefix = source.slice(source.lastIndexOf('\n', start - 1) + 1, start);
-  const container = prefix.match(/^(?:[ \t]*>[ \t]?|[ \t]*(?:[-+*]|\d+[.)])[ \t]+)*/)![0];
-  const quotes = (container.match(/>/g) ?? []).length;
-  const indent = columns(container.replace(/^.*>[ \t]?/, ''));
-  const orderedList = /\d+[.)][ \t]+/.test(container);
-  const heading = /^ {0,3}#{1,6}(?:[ \t]|$)/.test(prefix.slice(container.length));
-  const runs = /`+|\r?\n/g;
-  runs.lastIndex = start + ticks.length;
-  for (let found; (found = runs.exec(source));) {
-    if (found[0][0] === '`') {
-      if (found[0].length === ticks.length) return runs.lastIndex;
-      continue;
-    }
-    // Soft line breaks belong to a code span; paragraph and block boundaries do not.
-    if (heading) return;
-    const newline = source.indexOf('\n', runs.lastIndex);
-    let line = source.slice(runs.lastIndex, newline < 0 ? source.length : newline).replace(/\r$/, '');
-    // Quote markers and list indentation can continue the opening paragraph.
-    for (let i = 0; i < quotes; i++) line = line.replace(/^[ \t]*>[ \t]?/, '');
-    let offset = 0, width = 0;
-    while (width < indent && /[ \t]/.test(line[offset] ?? '')) {
-      width += line[offset++] === '\t' ? 4 - width % 4 : 1;
-    }
-    if (width >= indent) line = line.slice(offset);
-    const orderedItem = line.match(/^ {0,3}(\d{1,9})[.)](?:[ \t]+|$)/);
-    if (/^[ \t]*$/.test(line)
-      || orderedItem && (orderedList || Number(orderedItem[1]) === 1)
-      || /^ {0,3}(?:#{1,6}(?:[ \t]|$)|>|[-+*](?:[ \t]+|$)|<pasted_content id="|(?:`{3,}(?!`)[^`]*|~{3,}.*)$|(?:=+|-+|(?:\*[ \t]*){3,}|(?:_[ \t]*){3,})[ \t]*$)/.test(line)) return;
-  }
-}
 
 function escapedAt(source: string, at: number): boolean {
   let count = 0;
@@ -164,283 +10,143 @@ function escapedAt(source: string, at: number): boolean {
   return count % 2 !== 0;
 }
 
-/** Recognize a pipe-table header or contiguous pipe rows after its delimiter. */
-function inPipeTable(source: string, at: number): boolean {
-  const start = source.lastIndexOf('\n', at - 1) + 1;
-  const end = source.indexOf('\n', at);
-  const quotes = indentedLine(source.slice(start, at)).quotes;
-  const content = (line: string) => {
-    const parsed = indentedLine(line);
-    return parsed.quotes === quotes ? parsed.line.trim() : '';
-  };
-  const delimiter = (line: string) => /^\|?[ \t]*:?-+:?[ \t]*(?:\|[ \t]*:?-+:?[ \t]*)*\|?$/.test(line)
-    && line.includes('|');
-  const cells = (line: string) => [...line.matchAll(/\|/g)].filter(m => !escapedAt(line, m.index)).length
-    + 1 - Number(line.startsWith('|')) - Number(line.endsWith('|') && !escapedAt(line, line.length - 1));
-  const block = (line: string) => /^(?:#{1,6}(?:[ \t]|$)|>|[-+*](?:[ \t]+|$)|\d+[.)](?:[ \t]+|$)|`{3,}|~{3,})/.test(line);
-  const row = content(source.slice(start, end < 0 ? source.length : end));
-  if (block(row)) return false;
-  if (end >= 0) {
-    const nextEnd = source.indexOf('\n', end + 1);
-    const next = content(source.slice(end + 1, nextEnd < 0 ? source.length : nextEnd));
-    if (delimiter(next)) return cells(row) === cells(next);
+/** The parser calls this only in prose, so code and links keep their precedence. */
+function literalAt(source: string, at: number): Literal | undefined {
+  const tail = source.slice(at), char = source[at];
+  if (char === '<') {
+    const paste = tail.match(/^<pasted_content id="([^"\r\n]+)">\r?\n[\s\S]*?\r?\n<\/pasted_content id="\1">/);
+    if (paste) return { start: at, end: at + paste[0].length, kind: 'paste' };
   }
-  for (let to = start; to > 0;) {
-    const from = source.lastIndexOf('\n', to - 2) + 1;
-    const line = content(source.slice(from, to - 1));
-    if (delimiter(line)) {
-      const header = content(source.slice(source.lastIndexOf('\n', from - 2) + 1, from - 1));
-      return from > 0 && !!header && !block(header) && cells(header) === cells(line);
-    }
-    if (!line.includes('|') || block(line)) return false;
-    to = from;
+  const open = tail.match(/^(?:\\[([]|\${1,2}(?!\$))/)?.[0];
+  if (open) {
+    if (escapedAt(source, at) || char === '$' && source[at - 1] === '$') return;
+    if (open === '$' && /\s/.test(source[at + 1] ?? '')) return;
+    const close = open === '\\(' ? '\\)' : open === '\\[' ? '\\]' : open;
+    let end = source.indexOf(close, at + open.length);
+    while (end >= 0 && escapedAt(source, end)) end = source.indexOf(close, end + close.length);
+    if (end < 0 || open === '$' && (/\s/.test(source[end - 1] ?? '') || /\d|\$/.test(source[end + 1] ?? '')
+      || source.slice(at, end).includes('\n'))) return;
+    return { start: at, end: end + close.length, kind: 'math' };
   }
-  return false;
+  if (char === '"' && escapedAt(source, at) || char === "'" && /[\p{L}\p{N}]/u.test(source[at - 1] ?? '')) return;
+  const quoted = tail.match(/^(?:"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'|“[^”\n]*”|「[^」\n]*」|『[^』\n]*』)/)?.[0];
+  if (!quoted || source.trim() === quoted || char === "'" && /[\p{L}\p{N}]/u.test(source[at + quoted.length] ?? '')) return;
+  return { start: at, end: at + quoted.length, kind: 'quote' };
 }
 
-/** Common math delimiters only; leave unmatched/escaped delimiters and prices as prose. */
-function mathEnd(source: string, at: number, open: string): number | undefined {
-  if (escapedAt(source, at)) return;
-  if (open === '$' && /\s/.test(source[at + 1] ?? '')) return;
-  const close = open === '\\(' ? '\\)' : open === '\\[' ? '\\]' : open;
-  let end = source.indexOf(close, at + open.length);
-  while (end >= 0 && escapedAt(source, end)) end = source.indexOf(close, end + close.length);
-  if (end < 0) return;
-  if (open === '$' && (/\s/.test(source[end - 1] ?? '') || /\d|\$/.test(source[end + 1] ?? '')
-    || source.slice(at, end).includes('\n'))) return;
-  // Currency signs in neighboring cells are not a paired formula. Escaped
-  // pipes remain valid formula contents, as do ordinary math pipes outside tables.
-  if (open === '$' && referenceEnd(source, at, end, false) < end && inPipeTable(source, at)) return;
-  return end + close.length;
-}
-
-/** Bare references stop at table separators; paths/mentions also stop at unmatched brackets. */
-function referenceEnd(source: string, start: number, end: number, balanceBrackets: boolean): number {
+/** Bare references stop at table separators and unmatched closing brackets. */
+function referenceEnd(source: string, start: number, end: number, balance: boolean): number {
   const pairs: Record<string, string> = { '(': ')', '[': ']', '{': '}' };
   const stack: string[] = [];
   for (let i = start; i < end; i++) {
     const char = source[i]!;
     if (char === '|' && !escapedAt(source, i)) return i;
-    if (!balanceBrackets) continue;
+    if (!balance) continue;
     if (pairs[char]) stack.push(pairs[char]!);
     else if (')]}'.includes(char) && stack.pop() !== char) return i;
   }
   return end;
 }
 
-/** Paired same-line emphasis belongs to the prose, not the enclosed reference. */
-function emphasisReferenceBounds(source: string, start: number, end: number, before: string): [number, number] {
-  const suffix = source.slice(start, end).match(/[*_]+[.:!?]*$/);
-  if (!suffix) return [start, end];
-  const prefix = before.slice(before.lastIndexOf('\n') + 1).replace(/_*BV_LITERAL_\d+_END/g, 'L');
-  const closing = prefix.length + suffix.index!;
-  const line = prefix + source.slice(start, end) + (source[end] ?? ' ');
-  const punctuation = /[\p{P}$+<=>^`|~]/u;
-  const openers: Array<{ at: number; char: string; size: number; remaining: number; closes: boolean }> = [];
-  let from = start, to = end;
-  for (const mark of line.matchAll(/\*+|_+/g)) {
-    const at = mark.index + Number(escapedAt(line, mark.index));
-    const size = mark[0].length - (at - mark.index), char = mark[0][0]!;
-    if (!size) continue;
-    // Internal globs and filename underscores are literal. A leading underscore
-    // run can be an opener, since the path pattern also accepts _docs/guide_.
-    if (at > prefix.length && at < closing) continue;
-    const previous = line[at - 1] ?? ' ', next = line[at + size] ?? ' ';
-    const left = !/\s/.test(next) && (!punctuation.test(next) || /\s/.test(previous) || punctuation.test(previous));
-    const right = !/\s/.test(previous) && (!punctuation.test(previous) || /\s/.test(next) || punctuation.test(next));
-    const opens = left && (char === '*' || !right || punctuation.test(previous));
-    const closes = right && (char === '*' || !left || punctuation.test(next));
-    let remaining = size;
-    if (closes) for (let i = openers.length - 1; i >= 0 && remaining; i--) {
-      const opener = openers[i]!;
-      // Runs that can both open and close obey Markdown's rule of three.
-      if (opener.char !== char || (opener.closes || opens) && (opener.size + size) % 3 === 0
-        && (opener.size % 3 !== 0 || size % 3 !== 0)) continue;
-      const used = Math.min(opener.remaining, remaining);
-      opener.remaining -= used;
-      remaining -= used;
-      if (at >= closing) {
-        to = Math.min(to, start + at - prefix.length);
-        if (opener.at === prefix.length) from = start + opener.size;
-      }
-      // Delimiters inside a completed pair cannot close outside that pair.
-      openers.length = opener.remaining ? i + 1 : i;
-    }
-    if (opens && remaining && at < closing) openers.push({ at, char, size, remaining, closes });
+function firstAt(spans: Span[], at: number): number {
+  let low = 0, high = spans.length;
+  while (low < high) {
+    const mid = (low + high) >>> 1;
+    if (spans[mid]!.start < at) low = mid + 1;
+    else high = mid;
   }
-  return [from, to];
+  return low;
 }
 
-type TextSpan = { start: number; end: number };
-
-/** Read a reference destination and optional title, without consuming following prose. */
-function definitionEnd(source: string, at: number): number | undefined {
-  at += source.slice(at).match(/^[ \t]*(?:\r?\n[ \t]*)?/)![0].length;
-  const start = at, angle = source[at] === '<';
-  let depth = 0;
-  if (angle) at++;
-  for (; at < source.length; at++) {
-    const char = source[at]!;
-    if (char === '\\' && /[!"#$%&'()*+,\-./:;<=>?@[\]\\^_`{|}~]/.test(source[at + 1] ?? '')) { at++; continue; }
-    if (angle) {
-      if (char === '>') { at++; break; }
-      if (char === '<' || /[\r\n]/.test(char)) return;
-    } else {
-      if (/[\s\x00-\x1f]/.test(char)) break;
-      if (char === '(') depth++;
-      else if (char === ')' && --depth < 0) return;
-    }
-  }
-  if (at === start || depth || (angle && source[at - 1] !== '>')) return;
-  const destinationEnd = at;
-  at += source.slice(at).match(/^[ \t]*/)![0].length;
-  const lineEnd = at;
-  const nextLine = /^(?:\r?\n|$)/.test(source.slice(at));
-  if (nextLine) at += source.slice(at).match(/^(?:\r?\n[ \t]*)?/)![0].length;
-  const open = source[at], close = open === '(' ? ')' : open;
-  if (at > destinationEnd && open && '"\'('.includes(open)) {
-    const titleStart = at++;
-    for (; at < source.length; at++) {
-      if (source[at] === '\\' && /[!"#$%&'()*+,\-./:;<=>?@[\]\\^_`{|}~]/.test(source[at + 1] ?? '')) { at++; continue; }
-      if (source[at] === close) {
-        at++;
-        at += source.slice(at).match(/^[ \t]*/)![0].length;
-        if (/^(?:\r?\n|$)/.test(source.slice(at))) return at;
-        break;
-      }
-      if ((open === '(' && source[at] === '(') || /^\r?\n[ \t]*\r?\n/.test(source.slice(at))) break;
-    }
-    if (titleStart <= lineEnd) return;
-  }
-  return nextLine ? lineEnd : undefined;
+function contains(spans: Span[], at: number): boolean {
+  const span = spans[firstAt(spans, at + 1) - 1];
+  return span !== undefined && at < span.end;
 }
 
-/** Resolve references after other literals, so definitions inside code cannot create links. */
-function protectReferenceLinks(source: string, spans: TextSpan[], blockEnds: Set<number>,
-  protectedText: ProtectedText): ProtectedText {
-  // Keep offsets and line boundaries while hiding brackets inside existing literals.
-  const mask = (ranges: TextSpan[]) => {
-    const parts: string[] = [];
-    let cursor = 0;
-    for (const { start, end } of ranges) {
-      parts.push(source.slice(cursor, start), source.slice(start, end).replace(/[^\r\n]/g, ' '));
-      cursor = end;
-    }
-    return parts.join('') + source.slice(cursor);
-  };
-  const masked = mask(spans), references: TextSpan[] = [], labels = new Set<string>();
-  const normalize = (label: string) => label.trim().replace(/[ \t\r\n]+/g, ' ').toLowerCase().toUpperCase();
-  const validLabel = (label: string) => /^(?:\\[^\r\n]|[^\[\]\\]){1,999}$/.test(label)
-    && !!label.trim() && !/\r?\n[ \t]*\r?\n/.test(label);
-  const definitions = /^ {0,3}\[((?:\\[^\r\n]|[^\[\]\\]){1,999})\]:/gm;
-  for (let match; (match = definitions.exec(masked));) {
-    const start = match.index;
-    const previousEnd = start ? start - (source[start - 2] === '\r' ? 2 : 1) : 0;
-    const previous = source.slice(source.lastIndexOf('\n', previousEnd - 1) + 1, previousEnd);
-    // A definition may start a block or follow another definition, but cannot interrupt a paragraph.
-    if (start && previous.trim() && !blockEnds.has(previousEnd)
-      && !/^ {0,3}(?:#{1,6}(?:[ \t]|$)|(?:=+|-+|(?:\*[ \t]*){3,}|(?:_[ \t]*){3,})[ \t]*$)/.test(previous)) continue;
-    const labelStart = start + match[0].indexOf('[') + 1;
-    const label = source.slice(labelStart, definitions.lastIndex - 2);
-    if (!validLabel(label)) continue;
-    const end = definitionEnd(source, definitions.lastIndex);
-    if (end === undefined) continue;
-    labels.add(normalize(label));
-    references.push({ start, end });
-    blockEnds.add(end);
-    definitions.lastIndex = end;
-  }
-  if (!labels.size) return protectedText;
-  const links = /!?\[((?:\\[^\r\n]|[^\[\]\\])*)\](?:\[((?:\\[^\r\n]|[^\[\]\\]){0,999})\])?/g;
-  for (let match; (match = links.exec(masked));) {
-    const start = match.index, bracket = start + (match[0][0] === '!' ? 1 : 0);
-    const textEnd = bracket + match[1]!.length + 2;
-    const label = match[2] ? source.slice(textEnd + 1, links.lastIndex - 1) : source.slice(bracket + 1, textEnd - 1);
-    if (escapedAt(source, bracket) || /\r?\n[ \t]*\r?\n/.test(match[0])
-      || !validLabel(label) || !labels.has(normalize(label))) {
-      links.lastIndex = textEnd;
+/** Apply translation policy to the parser's original-source ranges. */
+function protectedSpans(source: string, markdown: MarkdownSpans): { spans: Span[]; fallback: Literal[] } {
+  const pattern = new RegExp([
+    /(?<opaque>[<"'“「『$\\])/.source,
+    /(?<url>https?:\/\/[^\s，；。！？、：<>"）)]+)/.source,
+    /(?<![A-Za-z0-9_.+-])(?<mention>@(?:"[^"\r\n]+"|'[^'\r\n]+'|[^\s,，;；。！？、：<>"'“”「」『』`]+))/.source,
+    /(?<![\p{L}\p{M}\p{N}_./\\-])(?<path>(?:\.{0,2}\/|~\/|[A-Za-z]:[\\/]|[\p{L}\p{M}\p{N}_.-]+\/)[^\s,，;；。！？、：<>"'“”「」『』`]+)/u.source,
+    /(?<![\p{L}\p{M}\p{N}_./\\-])(?<filename>[\p{L}_][\p{L}\p{M}\p{N}_.-]*\.[A-Za-z0-9_-]+|\.[A-Za-z][A-Za-z0-9_-]*)(?![A-Za-z0-9_-])/u.source,
+  ].join('|'), 'gu');
+  const spans: Span[] = [], fallback: Literal[] = [];
+  let formattingMarks: MarkdownSpans['marks'] | undefined;
+  let cursor = 0, next = 0, match = pattern.exec(source);
+  while (match || next < markdown.literals.length) {
+    const literal = markdown.literals[next];
+    if (literal && literal.start < cursor) { next++; continue; }
+    if (literal && (!match || literal.start <= match.index)) {
+      spans.push(literal); cursor = literal.end; next++;
+      pattern.lastIndex = cursor; match = pattern.exec(source);
       continue;
     }
-    references.push({ start, end: links.lastIndex });
+    if (!match) break;
+    const group = match.groups!;
+    let start = match.index, end = pattern.lastIndex;
+    if (group.opaque) {
+      const candidate = literalAt(source, start);
+      // An unmatched math delimiter in a table cell cannot pair with another cell's price.
+      if (!candidate || candidate.kind === 'math' && contains(markdown.tables, start)
+        && referenceEnd(source, start, candidate.end, false) < candidate.end) {
+        match = pattern.exec(source); continue;
+      }
+      end = candidate.end;
+      if (candidate.kind !== 'quote' && /\r|\n/.test(source.slice(start, end))) fallback.push(candidate);
+    } else if (group.filename && /^(?:e\.g|i\.e)$/i.test(group.filename) && source[end] === '.'
+      && !/[\p{L}\p{M}\p{N}_./\\-]/u.test(source[end + 1] ?? '')) {
+      match = pattern.exec(source); continue;
+    } else if (group.url || group.path || group.mention && !/^@["']/.test(group.mention)) {
+      end = referenceEnd(source, start, end, !group.url);
+      const suffix = source.slice(start, end).match(/[*_~]+[.:!?]*$/);
+      let marks = markdown.marks;
+      // A bare URL ends at Chinese punctuation for translation, even if GFM's
+      // autolink consumes it. Ask the same parser for the concealed emphasis.
+      if (suffix && group.url && /[，；。！？、：]/.test(source[end] ?? '')) {
+        formattingMarks ??= markdownSpans(source, at => literalAt(source, at), true).marks;
+        marks = formattingMarks;
+      }
+      if (suffix) for (let index = firstAt(marks, start); index < marks.length && marks[index]!.start < end; index++) {
+        const mark = marks[index]!;
+        if (contains(spans, mark.open)) continue;
+        if (!mark.closing && mark.start === start) start = mark.end;
+        else if (mark.closing && mark.open < start && mark.start >= match.index + suffix.index!) { end = mark.start; break; }
+      }
+    }
+    if (end > start) { spans.push({ start, end }); cursor = end; pattern.lastIndex = end; }
+    match = pattern.exec(source);
   }
-  const pieces: string[] = [], values: string[] = [];
-  let cursor = 0;
-  for (const { start, end } of [...spans, ...references].sort((a, b) => a.start - b.start || b.end - a.end)) {
-    if (start < cursor) continue;
-    pieces.push(source.slice(cursor, start), `${protectedText.prefix}${values.length}_END`);
-    values.push(source.slice(start, end));
-    cursor = end;
-  }
-  pieces.push(source.slice(cursor));
-  return { text: pieces.join(''), prefix: protectedText.prefix, values };
+  return { spans, fallback };
 }
 
 export function protectText(source: string): ProtectedText {
   let prefix = 'BV_LITERAL_';
   while (source.includes(prefix)) prefix = '_' + prefix;
-  const values: string[] = [];
-  const spans: TextSpan[] | undefined = source.includes(']:') ? [] : undefined;
-  const blockEnds = new Set<number>();
-  // Match spans on the original source: a paste or code block stays one literal,
-  // including any other syntax inside it. Reference links are resolved afterwards.
-  const pattern = new RegExp([
-    /<pasted_content id="(?<pasteId>[^"\r\n]+)">\r?\n[\s\S]*?\r?\n<\/pasted_content id="\k<pasteId>">(?:\r?\n)?/.source,
-    // Consume quote padding once and all list padding. Letting adjacent
-    // containers borrow that whitespace causes exponential retries without a fence.
-    /^(?<fencePrefix>(?:[ \t]*>(?:[ \t]|(?![ \t]))|[ \t]*(?:[-+*]|\d+[.)])[ \t]+(?![ \t]))* {0,3})(?:(?<backticks>`{3,})(?!`)[^`\r\n]*|(?<tildes>~{3,})(?!~)[^\r\n]*)(?:\r?\n|$)/.source,
-    /^(?<indented>(?: {4}| {0,3}\t)[ \t]*)(?=[^ \t\r\n])/.source,
-    /^ {0,3}(?<quoted>>[ \t>]*)(?=[^ \t\r\n])/.source,
-    /(?<ticks>`+)/.source,
-    /(?<math>\\[([]|(?<!\$)\${1,2}(?!\$))/.source,
-    /(?<url>https?:\/\/[^\s\uff0c\uff1b\u3002\uff01\uff1f\u3001\uff1a<>"\uff09)]+)|!?\[[^\]\n]*\]\([^\n)]*\)/.source,
-    /(?<![A-Za-z0-9_.+-])(?<mention>@(?:"[^"\r\n]+"|'[^'\r\n]+'|[^\s,\uff0c;\uff1b\u3002\uff01\uff1f\u3001\uff1a<>"'\u201c\u201d\u300c\u300d\u300e\u300f`]+))/.source,
-    // Hide Unicode basenames and relative-path prefixes in full, including combining marks.
-    /(?<![\p{L}\p{M}\p{N}_./\\-])(?<path>(?:\.{0,2}\/|~\/|[A-Za-z]:[\\/]|[\p{L}\p{M}\p{N}_.-]+\/)[^\s,\uff0c;\uff1b\u3002\uff01\uff1f\u3001\uff1a<>"'\u201c\u201d\u300c\u300d\u300e\u300f`]+)/u.source,
-    /(?<![\p{L}\p{M}\p{N}_./\\-])(?<filename>[\p{L}_][\p{L}\p{M}\p{N}_.-]*\.[A-Za-z0-9_-]+|\.[A-Za-z][A-Za-z0-9_-]*)(?![A-Za-z0-9_-])/u.source,
-    /(?<doubleQuote>"(?:\\.|[^"\\\n])*")/.source,
-    /\u201c[^\u201d\n]*\u201d|\u300c[^\u300d\n]*\u300d|\u300e[^\u300f\n]*\u300f|(?<![\p{L}\p{N}])'(?:\\.|[^'\\\n])*'(?![\p{L}\p{N}])/u.source,
-  ].join('|'), 'gmu');
-  const pieces: string[] = [];
-  let cursor = 0;
-  for (let match; (match = pattern.exec(source));) {
-    const group = match.groups!;
-    // Complete prose abbreviations are not bare filenames. Explicit paths,
-    // quotes and code still win; longer dotted names keep their protection.
-    if (group.filename && /^(?:e\.g|i\.e)$/i.test(group.filename)
-      && source[pattern.lastIndex] === '.'
-      && !/[\p{L}\p{M}\p{N}_./\\-]/u.test(source[pattern.lastIndex + 1] ?? '')) continue;
-    if ((group.ticks || group.doubleQuote) && escapedAt(source, match.index)) { pattern.lastIndex = match.index + 1; continue; }
-    let start = match.index, end = pattern.lastIndex;
-    const indent = group.indented || group.fencePrefix || (group.quoted && match[0]);
-    const indentedEnd = indent ? indentedCodeEnd(source, match.index, indent, blockEnds) : undefined;
-    if (indentedEnd !== undefined) end = indentedEnd;
-    else if (group.backticks || group.tildes) end = fenceEnd(source, end, group.backticks || group.tildes!, group.fencePrefix!);
-    else if (group.indented || group.quoted) end = match.index;
-    else if (group.ticks) end = inlineCodeEnd(source, match.index, group.ticks) ?? match.index;
-    else if (group.math) end = mathEnd(source, match.index, group.math) ?? match.index;
-    else if (group.url || group.path || group.mention && !/^@["']/.test(group.mention)) {
-      end = referenceEnd(source, match.index, end, !group.url);
-      if (/[*_][.:!?]*$/.test(source.slice(start, end))) {
-        // Previously protected code/quotes must not supply a false opener.
-        [start, end] = emphasisReferenceBounds(source, start, end, pieces.join('') + source.slice(cursor, start));
-      }
+  const at = (offset: number) => literalAt(source, offset);
+  let selected = protectedSpans(source, markdownSpans(source, at));
+  if (selected.fallback.length) {
+    // Mid-paragraph display formulas/pastes can cross a Markdown block boundary.
+    // Hide only their interiors, preserving offsets and delimiter punctuation.
+    let masked = '', cursor = 0;
+    for (const span of selected.fallback) {
+      masked += source.slice(cursor, span.start + 1) + 'x'.repeat(span.end - span.start - 2) + source[span.end - 1];
+      cursor = span.end;
     }
-    if (end === match.index) continue;
-    const value = source.slice(start, end);
-    // A whole quoted question/reply is prose, rather than a literal embedded
-    // in an instruction. Still look inside for explicit files, code or formulas.
-    if (source.trim() === value && /^["'\u201c\u300c\u300e]/u.test(value)) { pattern.lastIndex = match.index + 1; continue; }
-    if (group.indented || group.quoted || group.backticks || group.tildes || group.pasteId) blockEnds.add(end);
-    const index = values.push(value) - 1;
-    spans?.push({ start, end });
-    pieces.push(source.slice(cursor, start), `${prefix}${index}_END`);
-    cursor = end;
-    pattern.lastIndex = end;
+    masked += source.slice(cursor);
+    selected = protectedSpans(source, markdownSpans(masked, at));
+  }
+  const pieces: string[] = [], values: string[] = [];
+  let cursor = 0;
+  for (const span of selected.spans) {
+    pieces.push(source.slice(cursor, span.start), `${prefix}${values.length}_END`);
+    values.push(source.slice(span.start, span.end)); cursor = span.end;
   }
   pieces.push(source.slice(cursor));
-  const protectedText = { text: pieces.join(''), prefix, values };
-  return spans ? protectReferenceLinks(source, spans, blockEnds, protectedText) : protectedText;
+  return { text: pieces.join(''), prefix, values };
 }
+
 
 export class LiteralIntegrityError extends Error {
   readonly detail: string;
@@ -515,20 +221,25 @@ export function translatedChineseDisplay(source: string): string {
   return display === text ? source : restoreText(display, protectedText);
 }
 
-function prose(text: string): string {
-  return protectText(text).text.replace(/_*BV_LITERAL_\d+_END/g, '');
+function prose(protectedText: ProtectedText): string {
+  return protectedText.text.replace(/_*BV_LITERAL_\d+_END/g, '');
+}
+
+/** Eligibility and literal protection share one result for a submission. */
+export function prepareTranslation(text: string, direction: 'en' | 'zh'): ProtectedText | undefined {
+  // Removing literals cannot introduce Chinese into an input that has none.
+  if (direction === 'en' && !/\p{Script=Han}/u.test(text)) return;
+  const protectedText = protectText(text), plain = prose(protectedText);
+  if (direction === 'en' ? /\p{Script=Han}/u.test(plain) : /[A-Za-z]{2,}/.test(plain)) return protectedText;
 }
 
 export function needsTranslation(text: string, direction: 'en' | 'zh'): boolean {
-  // Removing literals cannot introduce Chinese into an input that has none.
-  if (direction === 'en' && !/\p{Script=Han}/u.test(text)) return false;
-  const plain = prose(text);
-  return direction === 'en' ? /\p{Script=Han}/u.test(plain) : /[A-Za-z]{2,}/.test(plain);
+  return prepareTranslation(text, direction) !== undefined;
 }
 
 /** Message display only: Chinese prose is already readable, including mixed messages. */
 export function needsDisplayTranslation(text: string): boolean {
-  const plain = prose(text);
+  const plain = prose(protectText(text));
   return !/\p{Script=Han}/u.test(plain) && /[A-Za-z]{2,}/.test(plain);
 }
 

@@ -1,0 +1,16 @@
+{
+  "package": "micromark-util-edit-map",
+  "version": "1.0.0",
+  "upstream": "https://github.com/micromark/micromark/pull/249",
+  "reason": "Keep unchanged event prefixes in place to avoid quadratic parsing of repeated containers and setext headings.",
+  "files": {
+    "index.js": {
+      "before": "0a29b60e6299a7b17e57e3c185014ad9bfe5a0ad6fd1365ce14605d6d299cbf0",
+      "after": "225b745339e3d1990b11e620cbf6c3a839b0372e8dd34a7257cda5bb8839629f"
+    },
+    "dev/index.js": {
+      "before": "98048a86eeaf5d5b9c85715c124bd5865685a964cabe2a77e5039bf11d987017",
+      "after": "1a1d6c0ac64ddb1411e205d835e4a4ce1c625b0b0a589d23e5ae9049cb0b9736"
+    }
+  }
+}

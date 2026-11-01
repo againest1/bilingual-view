@@ -1,0 +1,17 @@
+{
+  "name": "bilingual-view-build",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build-markdown.mjs",
+    "build:check": "node scripts/build-markdown.mjs --check"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2",
+    "micromark": "4.0.3",
+    "micromark-extension-gfm": "3.0.0"
+  },
+  "overrides": {
+    "micromark-util-edit-map": "1.0.0"
+  }
+}

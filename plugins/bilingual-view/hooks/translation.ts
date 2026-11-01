@@ -1,6 +1,7 @@
 import type { PluginOptions } from 'claude-code';
 import type { TranslationIO } from './ports.ts';
-import { LiteralIntegrityError, needsTranslation, protectText, restoreText, splitText } from './text.ts';
+import { LiteralIntegrityError, prepareTranslation, restoreText, splitText } from './text.ts';
+import type { ProtectedText } from './text.ts';
 import { parseTranslation, providerConfig, translationRequest } from './provider.ts';
 import type { ProviderConfig, TranslationCorrection } from './provider.ts';
 import { effectiveSettings } from './settings.ts';
@@ -48,12 +49,12 @@ export async function requestTranslation(io: TranslationIO, config: ProviderConf
 
 /** Translate up to two chunks at a time per call, preserving source order. */
 export async function translate(io: TranslationIO, options: PluginOptions, source: string, direction: 'en' | 'zh',
-  signal?: AbortSignal, progress?: TranslationProgress): Promise<string> {
-  if (!needsTranslation(source, direction)) return source;
+  signal?: AbortSignal, progress?: TranslationProgress, prepared?: ProtectedText): Promise<string> {
+  const protectedText = prepared ?? prepareTranslation(source, direction);
+  if (!protectedText) return source;
   aborted(signal);
   const settings = await effectiveSettings(io, options);
   const config = providerConfig(settings.baseUrl, settings.model, settings.apiKey, settings.effort);
-  const protectedText = protectText(source);
   const chunks = splitText(protectedText.text);
   if (progress && (progress.source !== source || progress.direction !== direction)) {
     progress.source = source;

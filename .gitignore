@@ -8,6 +8,7 @@
 *.local.json
 cache/
 .DS_Store
+/node_modules/
 /AGENTS.md
 /AGENTS.override.md
 /docs/

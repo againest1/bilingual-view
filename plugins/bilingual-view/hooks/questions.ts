@@ -1,7 +1,7 @@
 import type { PluginOptions } from 'claude-code';
 import type { TranslationIO } from './ports.ts';
 import type { RecordEntry } from './state.ts';
-import { needsTranslation } from './text.ts';
+import { prepareTranslation } from './text.ts';
 import { translate } from './translation.ts';
 
 export type Question = {
@@ -87,8 +87,9 @@ export async function translateAnswers(io: TranslationIO, options: PluginOptions
       keys.push(key); blocks.push(previous.blocks[index]!); return previous.blocks[index]!.source;
     }
     const typed = value.slice(start);
-    if (!needsTranslation(typed, 'en')) return value;
-    const sent = value.slice(0, start) + await translate(io, options, typed, 'en', signal);
+    const prepared = prepareTranslation(typed, 'en');
+    if (!prepared) return value;
+    const sent = value.slice(0, start) + await translate(io, options, typed, 'en', signal, undefined, prepared);
     keys.push(key); blocks.push({ source: sent, display: value, status: 'ready' });
     return sent;
   };

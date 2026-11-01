@@ -1,8 +1,8 @@
 import type { ButtonProps, EngineInterface, Register, PluginOptions, RenderElement, RenderInput } from 'claude-code';
 import type { RuntimeIO } from './ports.ts';
-import type { DisplayMessageRef, FinalAnswerRef, State, RecordEntry } from './state.ts';
+import type { Block, DisplayMessageRef, FinalAnswerRef, State, RecordEntry } from './state.ts';
 import { newState, newView } from './state.ts';
-import { finalBlocks, needsTranslation, needsDisplayTranslation, textBlocks, translatedChineseDisplay } from './text.ts';
+import { finalBlocks, prepareTranslation, needsDisplayTranslation, textBlocks, translatedChineseDisplay } from './text.ts';
 import { aborted, inputFailure, requestTranslation, translate } from './translation.ts';
 import { TRANSLATION_SPEED_SAMPLE } from './speed-sample.ts';
 import { memoryKey, outputWorkKey, readRecord, saveRecord } from './storage.ts';
@@ -308,6 +308,24 @@ export const register: Register = (on, configuredOptions) => {
   // after a successful save, so the UI and requests use the same values without a reload.
   const options = { ...configuredOptions };
   const state = newState();
+  // Weak keys follow the existing record/block lifetime. Cache only derived
+  // display data, never modify saved text or keep a separate history cache.
+  const displayChecks = new WeakMap<RecordEntry, { source: string; needed: boolean }>();
+  const displayCopies = new WeakMap<Block, { raw: string; display: string }>();
+  const displayNeedsTranslation = (record: RecordEntry | null, source: string): boolean => {
+    const cached = record && displayChecks.get(record);
+    if (cached && cached.source === source) return cached.needed;
+    const needed = needsDisplayTranslation(source);
+    if (record) displayChecks.set(record, { source, needed });
+    return needed;
+  };
+  const translatedBlock = (block: Block): string => {
+    const cached = displayCopies.get(block);
+    if (cached?.raw === block.display) return cached.display;
+    const display = translatedChineseDisplay(block.display);
+    displayCopies.set(block, { raw: block.display, display });
+    return display;
+  };
   // Ephemeral UI data only. All settings are written through the host's userConfig.
   const listing: ModelListing = { version: 0, models: [], loading: false, error: '' };
   const tests: ProviderTests = { version: 0,
@@ -350,7 +368,9 @@ export const register: Register = (on, configuredOptions) => {
     // Unchanged submissions need no translation record. In particular, a ready
     // source=display record for English would suppress later Chinese backfill.
     if (!enabled(options) || !translateBeforeSend(options) || e.command) return next(e);
-    if (!await humanOrigin($, e.origin.kind) || /^\s*[!/]/.test(e.text) || !needsTranslation(e.text, 'en')) return next(e);
+    if (!await humanOrigin($, e.origin.kind) || /^\s*[!/]/.test(e.text)) return next(e);
+    const prepared = prepareTranslation(e.text, 'en');
+    if (!prepared) return next(e);
     const view = state.view;
     const input = { visible: false };
     view.inputTranslations.add(input);
@@ -368,7 +388,7 @@ export const register: Register = (on, configuredOptions) => {
         $.ui.invalidate('ui.render');
       });
       const started = await $.clock.now();
-      translated = await translate(hostIO($), options, e.text, 'en', next.signal);
+      translated = await translate(hostIO($), options, e.text, 'en', next.signal, undefined, prepared);
       translationMs = Math.max(0, await $.clock.now() - started);
     }
     catch (error) { return { drop: inputFailure(error) }; }
@@ -497,7 +517,7 @@ export const register: Register = (on, configuredOptions) => {
       return next(e);
     }
     if (state.view !== view) return next(e);
-    let needsChinese = !ready(record) && needsDisplayTranslation(source);
+    let needsChinese = !ready(record) && displayNeedsTranslation(record, source);
     if (ready(record) || !needsChinese) view.visible.delete(ref.id);
     else if (onScreen) {
       const visible = view.visible.get(ref.id);
@@ -518,7 +538,7 @@ export const register: Register = (on, configuredOptions) => {
     const showSent = state.originals.has(key);
     let display = !showSent && block?.status === 'ready' ? block.display : block?.source ?? text;
     if (!showSent && block?.status === 'ready' && record?.chineseSource === 'translation' && block.display !== block.source) {
-      display = translatedChineseDisplay(block.display);
+      display = translatedBlock(block);
     }
     const drawing = await next({ ...e, props: { ...e.props, text: display } });
     // Display equality only hides redundant controls; UUID reuse is unchanged.
@@ -571,7 +591,7 @@ export const register: Register = (on, configuredOptions) => {
       record = await displayRecord(hostIO($), state, ref);
       if (state.view !== view) { outcome = 'view_changed'; return next(e); }
       let needsChinese = !ready(record)
-        && needsDisplayTranslation((record?.blocks.map(block => block.source) ?? ref.sources).join('\n\n'));
+        && displayNeedsTranslation(record, (record?.blocks.map(block => block.source) ?? ref.sources).join('\n\n'));
       if (ready(record) || !needsChinese) view.visible.delete(e.requestId);
       // As with user rows, only discover work on entry. The shared poller
       // handles recovery; ordinary redraws need no fresh cache read.
@@ -593,7 +613,7 @@ export const register: Register = (on, configuredOptions) => {
       // Adapt only translated display copies. Pending/unchanged blocks and the
       // saved-text equality used to hide redundant controls stay untouched.
       const display = showOriginal ? original : record.blocks.map(block => block.status === 'ready'
-        ? block.display === block.source ? block.display : translatedChineseDisplay(block.display)
+        ? block.display === block.source ? block.display : translatedBlock(block)
         : block.source).join('\n\n');
       const needsWork = !ready(record) && needsChinese;
       const error = record.blocks.find(block => block.status === 'error')?.error;
