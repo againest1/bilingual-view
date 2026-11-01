@@ -396,7 +396,7 @@ export function protectText(source: string): ProtectedText {
     /(?<![A-Za-z0-9_.+-])(?<mention>@(?:"[^"\r\n]+"|'[^'\r\n]+'|[^\s,\uff0c;\uff1b\u3002\uff01\uff1f\u3001\uff1a<>"'\u201c\u201d\u300c\u300d\u300e\u300f`]+))/.source,
     // Hide Unicode basenames and relative-path prefixes in full, including combining marks.
     /(?<![\p{L}\p{M}\p{N}_./\\-])(?<path>(?:\.{0,2}\/|~\/|[A-Za-z]:[\\/]|[\p{L}\p{M}\p{N}_.-]+\/)[^\s,\uff0c;\uff1b\u3002\uff01\uff1f\u3001\uff1a<>"'\u201c\u201d\u300c\u300d\u300e\u300f`]+)/u.source,
-    /(?<![\p{L}\p{M}\p{N}_./\\-])(?:[\p{L}_][\p{L}\p{M}\p{N}_.-]*\.[A-Za-z0-9_-]+|\.[A-Za-z][A-Za-z0-9_-]*)(?![A-Za-z0-9_-])/u.source,
+    /(?<![\p{L}\p{M}\p{N}_./\\-])(?<filename>[\p{L}_][\p{L}\p{M}\p{N}_.-]*\.[A-Za-z0-9_-]+|\.[A-Za-z][A-Za-z0-9_-]*)(?![A-Za-z0-9_-])/u.source,
     /(?<doubleQuote>"(?:\\.|[^"\\\n])*")/.source,
     /\u201c[^\u201d\n]*\u201d|\u300c[^\u300d\n]*\u300d|\u300e[^\u300f\n]*\u300f|(?<![\p{L}\p{N}])'(?:\\.|[^'\\\n])*'(?![\p{L}\p{N}])/u.source,
   ].join('|'), 'gmu');
@@ -404,6 +404,11 @@ export function protectText(source: string): ProtectedText {
   let cursor = 0;
   for (let match; (match = pattern.exec(source));) {
     const group = match.groups!;
+    // Complete prose abbreviations are not bare filenames. Explicit paths,
+    // quotes and code still win; longer dotted names keep their protection.
+    if (group.filename && /^(?:e\.g|i\.e)$/i.test(group.filename)
+      && source[pattern.lastIndex] === '.'
+      && !/[\p{L}\p{M}\p{N}_./\\-]/u.test(source[pattern.lastIndex + 1] ?? '')) continue;
     if ((group.ticks || group.doubleQuote) && escapedAt(source, match.index)) { pattern.lastIndex = match.index + 1; continue; }
     let start = match.index, end = pattern.lastIndex;
     const indent = group.indented || group.fencePrefix || (group.quoted && match[0]);
