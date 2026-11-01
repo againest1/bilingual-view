@@ -7577,7 +7577,9 @@ var blockTypes = /* @__PURE__ */ new Set([
   "table",
   "tableHead",
   "tableRow",
-  "tableDelimiterRow"
+  "tableDelimiterRow",
+  "codeFenced",
+  "codeIndented"
 ]);
 function literals(literalAt) {
   const construct = {
@@ -7619,18 +7621,43 @@ function markdownSpans(source, literalAt, formatting = false) {
   const extensions = [gfmSyntax, literals(literalAt)];
   if (formatting) extensions.push({ disable: { null: ["protocolAutolink"] } });
   const events = postprocess(parse({ extensions }).document().write(preprocess()(source, void 0, true)));
+  const stack = [];
   let protectedEnd = -1;
   for (const [kind, token] of events) {
-    if (kind !== "enter") continue;
+    if (kind === "exit") {
+      const parent2 = stack.at(-1);
+      if (parent2?.token === token) {
+        if (parent2.item !== void 0) out.blocks[parent2.item].end = token.end.offset;
+        stack.pop();
+      }
+      continue;
+    }
     const start = token.start.offset, end = token.end.offset;
     if (start < protectedEnd) continue;
+    const parent = stack.at(-1);
+    if (token.type === "listItemPrefix" && parent) {
+      const itemStart = source.lastIndexOf("\n", start - 1) + 1;
+      if (parent.item !== void 0) out.blocks[parent.item].end = itemStart;
+      parent.item = out.blocks.length;
+      out.blocks.push({ start: itemStart, end, kind: "listItem", parent: parent.index });
+    }
     if (blockTypes.has(token.type)) {
-      out.blocks.push({ start: source.lastIndexOf("\n", start - 1) + 1, end });
+      const index = out.blocks.length;
+      out.blocks.push({
+        start: source.lastIndexOf("\n", start - 1) + 1,
+        end,
+        kind: token.type,
+        parent: parent?.item ?? parent?.index ?? null
+      });
+      stack.push({ token, index });
     }
     if (protectedTypes.has(token.type)) {
       out.literals.push({ start, end });
       protectedEnd = end;
     } else if (emphasisTypes.has(token.type)) {
+      if (token.type === "strong" && parent?.token.type === "paragraph" && parent.token.start.offset === start && parent.token.end.offset === end) {
+        out.blocks[parent.index].kind = "heading";
+      }
       const width = token.type === "strong" ? 2 : token.type === "emphasis" ? 1 : source[start + 1] === "~" ? 2 : 1;
       out.marks.push(
         { start, end: start + width, open: start, closing: false },

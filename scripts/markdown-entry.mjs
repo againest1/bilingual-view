@@ -7,7 +7,7 @@ const protectedTypes = new Set(['codeFenced', 'codeIndented', 'codeText', 'link'
 const emphasisTypes = new Set(['strong', 'emphasis', 'strikethrough']);
 const blockTypes = new Set(['paragraph', 'atxHeading', 'setextHeading', 'thematicBreak', 'htmlFlow',
   'blockQuote', 'listOrdered', 'listUnordered', 'gfmFootnoteDefinition', 'table', 'tableHead', 'tableRow',
-  'tableDelimiterRow']);
+  'tableDelimiterRow', 'codeFenced', 'codeIndented']);
 
 /** Recognize translation literals only where the Markdown parser allows prose. */
 function literals(literalAt) {
@@ -50,20 +50,45 @@ export function markdownSpans(source, literalAt, formatting = false) {
   const extensions = [gfmSyntax, literals(literalAt)];
   if (formatting) extensions.push({ disable: { null: ['protocolAutolink'] } });
   const events = postprocess(parse({ extensions }).document().write(preprocess()(source, undefined, true)));
+  const stack = [];
   let protectedEnd = -1;
   for (const [kind, token] of events) {
-    if (kind !== 'enter') continue;
+    if (kind === 'exit') {
+      const parent = stack.at(-1);
+      if (parent?.token === token) {
+        if (parent.item !== undefined) out.blocks[parent.item].end = token.end.offset;
+        stack.pop();
+      }
+      continue;
+    }
     const start = token.start.offset, end = token.end.offset;
     if (start < protectedEnd) continue;
+    const parent = stack.at(-1);
+    if (token.type === 'listItemPrefix' && parent) {
+      // Micromark emits item prefixes and list containers, not item spans.
+      // A sibling prefix or the container's exit closes the complete item.
+      const itemStart = source.lastIndexOf('\n', start - 1) + 1;
+      if (parent.item !== undefined) out.blocks[parent.item].end = itemStart;
+      parent.item = out.blocks.length;
+      out.blocks.push({ start: itemStart, end, kind: 'listItem', parent: parent.index });
+    }
     if (blockTypes.has(token.type)) {
       // Include quote/list prefixes with their content. tableHead keeps the
       // header and delimiter together even when the table must be subdivided.
-      out.blocks.push({ start: source.lastIndexOf('\n', start - 1) + 1, end });
+      const index = out.blocks.length;
+      out.blocks.push({ start: source.lastIndexOf('\n', start - 1) + 1, end,
+        kind: token.type, parent: parent?.item ?? parent?.index ?? null });
+      stack.push({ token, index });
     }
     if (protectedTypes.has(token.type)) {
       out.literals.push({ start, end });
       protectedEnd = end;
     } else if (emphasisTypes.has(token.type)) {
+      // A paragraph consisting entirely of strong text is a common prose heading.
+      if (token.type === 'strong' && parent?.token.type === 'paragraph'
+        && parent.token.start.offset === start && parent.token.end.offset === end) {
+        out.blocks[parent.index].kind = 'heading';
+      }
       const width = token.type === 'strong' ? 2 : token.type === 'emphasis' ? 1 : source[start + 1] === '~' ? 2 : 1;
       out.marks.push({ start, end: start + width, open: start, closing: false },
         { start: end - width, end, open: start, closing: true });

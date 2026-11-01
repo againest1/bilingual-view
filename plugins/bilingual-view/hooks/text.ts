@@ -1,10 +1,10 @@
 import { markdownSpans } from './markdown.ts';
-import type { Literal, MarkdownSpans, Span } from './markdown.ts';
+import type { Literal, MarkdownBlock, MarkdownSpans, Span } from './markdown.ts';
 
 /** Pure text helpers. No Claude or network access. */
 export type ProtectedText = {
   text: string; prefix: string; values: string[];
-  blocks: Span[]; inlines: Span[];
+  blocks: MarkdownBlock[]; inlines: Span[];
 };
 
 function escapedAt(source: string, at: number): boolean {
@@ -166,7 +166,7 @@ export function protectText(source: string): ProtectedText {
   };
   const mapped = ({ start, end }: Span): Span => ({ start: position(start, false), end: position(end, true) });
   return { text: pieces.join(''), prefix, values,
-    blocks: markdown.blocks.map(mapped),
+    blocks: markdown.blocks.map(block => ({ ...block, ...mapped(block) })),
     inlines: [...replacements, ...markdown.marks.filter(mark => mark.closing)
       .map(mark => mapped({ start: mark.open, end: mark.end }))],
   };
@@ -268,13 +268,37 @@ export function needsDisplayTranslation(text: string): boolean {
   return !/\p{Script=Han}/u.test(plain) && /[A-Za-z]{2,}/.test(plain);
 }
 
-/** Keep fitting Markdown ranges intact; subdivide oversized blocks within the HTTP budget. */
+const heading = (block: MarkdownBlock): boolean =>
+  block.kind === 'atxHeading' || block.kind === 'setextHeading' || block.kind === 'heading';
+
+/** Connect adjacent siblings without joining unrelated list items or quote containers. */
+function contextGroups(blocks: MarkdownBlock[]): Span[] {
+  const groups: Span[] = [];
+  const siblings = new Map<number | null, { block: MarkdownBlock; group?: Span }>();
+  for (const block of blocks) {
+    const previous = siblings.get(block.parent);
+    let group: Span | undefined;
+    if (previous && (heading(previous.block) && !heading(block) && block.kind !== 'thematicBreak'
+      || previous.block.kind === 'paragraph' && ['listOrdered', 'listUnordered', 'table'].includes(block.kind))) {
+      group = previous.group;
+      if (!group) { group = { start: previous.block.start, end: block.end }; groups.push(group); }
+      else group.end = block.end;
+    }
+    siblings.set(block.parent, { block, group });
+  }
+  return groups;
+}
+
+let sentenceSegmenter: Intl.Segmenter | undefined;
+
+/** Prefer complete context, blocks and sentences within the existing HTTP budget. */
 export function splitText({ text, blocks, inlines }: ProtectedText, limit = 1700): string[] {
   if (text.length <= limit) return text ? [text] : [];
+  const groups = contextGroups(blocks);
   // Parser ranges nest. Keep the outermost ranges that fit, exposing smaller
   // paragraphs, table heads/rows and inline spans only inside oversized blocks.
   const intact: Span[] = [];
-  for (const span of [...blocks, ...inlines].filter(span => span.end - span.start <= limit)
+  for (const span of [...groups, ...blocks, ...inlines].filter(span => span.end - span.start <= limit)
     .sort((a, b) => a.start - b.start || b.end - a.end)) {
     if (span.start >= (intact.at(-1)?.end ?? 0)) intact.push(span);
   }
@@ -282,26 +306,43 @@ export function splitText({ text, blocks, inlines }: ProtectedText, limit = 1700
     const span = intact[firstAt(intact, cut) - 1];
     return span && cut < span.end ? span.start : cut;
   };
-  const boundaries = [...new Set(blocks.flatMap(span => [span.start, span.end]))].sort((a, b) => a - b);
-  const pieces: string[] = [];
-  let start = 0;
-  while (text.length - start > limit) {
-    const ceiling = beforeRange(start + limit), minimum = start + limit / 2;
-    let cut = 0, low = 0, high = boundaries.length;
+  // Headings need their content; opaque code does not need its own request.
+  // Complete prose/group ends remain useful even below half of the limit.
+  const boundaries = [...new Set([...groups, ...blocks.filter(block => !heading(block)
+    && block.kind !== 'codeFenced' && block.kind !== 'codeIndented')]
+    .map(span => span.end))].sort((a, b) => a - b);
+  const latest = (positions: number[], start: number, ceiling: number): number => {
+    let low = 0, high = positions.length;
     while (low < high) {
       const mid = (low + high) >>> 1;
-      if (boundaries[mid]! <= ceiling) low = mid + 1;
+      if (positions[mid]! <= ceiling) low = mid + 1;
       else high = mid;
     }
-    for (let i = low - 1; i >= 0 && boundaries[i]! > minimum; i--) {
-      if (beforeRange(boundaries[i]!) === boundaries[i]) { cut = boundaries[i]!; break; }
+    for (let i = low - 1; i >= 0 && positions[i]! > start; i--) {
+      if (beforeRange(positions[i]!) === positions[i]) return positions[i]!;
     }
-    // Oversized paragraphs/rows fall back to lines, then prose boundaries.
-    for (const line of [true, false]) {
+    return 0;
+  };
+  const pieces: string[] = [];
+  let start = 0, sentences: number[] | undefined;
+  while (text.length - start > limit) {
+    const ceiling = beforeRange(start + limit);
+    const minimum = start + (text.slice(start, ceiling).match(/^\s*/)?.[0].length ?? 0);
+    let cut = latest(boundaries, minimum, ceiling);
+    if (!cut) {
+      sentenceSegmenter ??= new Intl.Segmenter('en', { granularity: 'sentence' });
+      // Soft line wraps must not masquerade as sentence endings. Masking keeps
+      // source offsets unchanged; the returned chunks always slice the original.
+      sentences ??= Array.from(sentenceSegmenter.segment(text.replace(/[\r\n]/g, ' ')),
+        ({ index, segment }) => index + segment.trimEnd().length);
+      cut = latest(sentences, minimum, ceiling);
+    }
+    // A sentence that exceeds the limit falls back to clauses, then whitespace.
+    for (const clause of [true, false]) {
       if (cut) break;
       for (let i = ceiling; i > minimum; i--) {
-        const boundary = line ? text[i - 1] === '\n'
-          : text[i - 1] === ' ' || text[i - 1] === '\u3002' || text[i - 1] === '.' && text[i] === ' ';
+        const boundary = clause ? /[，；：]/.test(text[i - 1]!)
+          || /[,;:]/.test(text[i - 1]!) && /\s/.test(text[i] ?? '') : /\s/.test(text[i - 1]!);
         if (boundary && beforeRange(i) === i) { cut = i; break; }
       }
     }
