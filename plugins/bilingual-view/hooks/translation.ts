@@ -55,7 +55,7 @@ export async function translate(io: TranslationIO, options: PluginOptions, sourc
   aborted(signal);
   const settings = await effectiveSettings(io, options);
   const config = providerConfig(settings.baseUrl, settings.model, settings.apiKey, settings.effort);
-  const chunks = splitText(protectedText.text);
+  const chunks = splitText(protectedText);
   if (progress && (progress.source !== source || progress.direction !== direction)) {
     progress.source = source;
     progress.direction = direction;

@@ -7564,6 +7564,21 @@ var protectedTypes = /* @__PURE__ */ new Set([
   "bilingualLiteral"
 ]);
 var emphasisTypes = /* @__PURE__ */ new Set(["strong", "emphasis", "strikethrough"]);
+var blockTypes = /* @__PURE__ */ new Set([
+  "paragraph",
+  "atxHeading",
+  "setextHeading",
+  "thematicBreak",
+  "htmlFlow",
+  "blockQuote",
+  "listOrdered",
+  "listUnordered",
+  "gfmFootnoteDefinition",
+  "table",
+  "tableHead",
+  "tableRow",
+  "tableDelimiterRow"
+]);
 function literals(literalAt) {
   const construct = {
     name: "bilingualLiteral",
@@ -7600,7 +7615,7 @@ function literals(literalAt) {
   };
 }
 function markdownSpans(source, literalAt, formatting = false) {
-  const out = { literals: [], marks: [], tables: [] };
+  const out = { literals: [], marks: [], tables: [], blocks: [] };
   const extensions = [gfmSyntax, literals(literalAt)];
   if (formatting) extensions.push({ disable: { null: ["protocolAutolink"] } });
   const events = postprocess(parse({ extensions }).document().write(preprocess()(source, void 0, true)));
@@ -7609,6 +7624,9 @@ function markdownSpans(source, literalAt, formatting = false) {
     if (kind !== "enter") continue;
     const start = token.start.offset, end = token.end.offset;
     if (start < protectedEnd) continue;
+    if (blockTypes.has(token.type)) {
+      out.blocks.push({ start: source.lastIndexOf("\n", start - 1) + 1, end });
+    }
     if (protectedTypes.has(token.type)) {
       out.literals.push({ start, end });
       protectedEnd = end;

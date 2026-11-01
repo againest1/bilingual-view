@@ -2,7 +2,10 @@ import { markdownSpans } from './markdown.ts';
 import type { Literal, MarkdownSpans, Span } from './markdown.ts';
 
 /** Pure text helpers. No Claude or network access. */
-export type ProtectedText = { text: string; prefix: string; values: string[] };
+export type ProtectedText = {
+  text: string; prefix: string; values: string[];
+  blocks: Span[]; inlines: Span[];
+};
 
 function escapedAt(source: string, at: number): boolean {
   let count = 0;
@@ -125,7 +128,8 @@ export function protectText(source: string): ProtectedText {
   let prefix = 'BV_LITERAL_';
   while (source.includes(prefix)) prefix = '_' + prefix;
   const at = (offset: number) => literalAt(source, offset);
-  let selected = protectedSpans(source, markdownSpans(source, at));
+  let markdown = markdownSpans(source, at);
+  let selected = protectedSpans(source, markdown);
   if (selected.fallback.length) {
     // Mid-paragraph display formulas/pastes can cross a Markdown block boundary.
     // Hide only their interiors, preserving offsets and delimiter punctuation.
@@ -135,16 +139,37 @@ export function protectText(source: string): ProtectedText {
       cursor = span.end;
     }
     masked += source.slice(cursor);
-    selected = protectedSpans(source, markdownSpans(masked, at));
+    markdown = markdownSpans(masked, at);
+    selected = protectedSpans(source, markdown);
   }
   const pieces: string[] = [], values: string[] = [];
-  let cursor = 0;
+  const replacements: Span[] = [];
+  let cursor = 0, length = 0;
   for (const span of selected.spans) {
-    pieces.push(source.slice(cursor, span.start), `${prefix}${values.length}_END`);
+    const before = source.slice(cursor, span.start), token = `${prefix}${values.length}_END`;
+    pieces.push(before, token);
+    const start = length + before.length;
+    replacements.push({ start, end: start + token.length });
+    length = start + token.length;
     values.push(source.slice(span.start, span.end)); cursor = span.end;
   }
   pieces.push(source.slice(cursor));
-  return { text: pieces.join(''), prefix, values };
+  // Reuse the original parse, translating its offsets through the literal
+  // substitutions instead of parsing placeholder text as a new document.
+  const position = (offset: number, closing: boolean): number => {
+    const index = firstAt(selected.spans, offset + 1) - 1;
+    if (index < 0) return offset;
+    const original = selected.spans[index]!, replacement = replacements[index]!;
+    if (offset === original.start) return replacement.start;
+    if (offset < original.end) return closing ? replacement.end : replacement.start;
+    return replacement.end + offset - original.end;
+  };
+  const mapped = ({ start, end }: Span): Span => ({ start: position(start, false), end: position(end, true) });
+  return { text: pieces.join(''), prefix, values,
+    blocks: markdown.blocks.map(mapped),
+    inlines: [...replacements, ...markdown.marks.filter(mark => mark.closing)
+      .map(mark => mapped({ start: mark.open, end: mark.end }))],
+  };
 }
 
 
@@ -243,29 +268,51 @@ export function needsDisplayTranslation(text: string): boolean {
   return !/\p{Script=Han}/u.test(plain) && /[A-Za-z]{2,}/.test(plain);
 }
 
-/** Lossless boundaries keep long requests within the host's 30s HTTP budget. */
-export function splitText(text: string, limit = 1700): string[] {
-  const pieces: string[] = [];
-  let rest = text;
-  while (rest.length > limit) {
-    let cut = limit;
-    const head = rest.slice(0, limit);
-    // Keep complete lines together before falling back to an in-line boundary.
-    const newline = head.lastIndexOf('\n');
-    const boundary = newline > limit / 2 ? newline
-      : Math.max(head.lastIndexOf('\u3002'), head.lastIndexOf('. '), head.lastIndexOf(' '));
-    if (boundary > limit / 2) cut = boundary + 1;
-    // Never cut one of our protected literals or a UTF-16 surrogate pair.
-    const tokenStart = rest.lastIndexOf('BV_LITERAL_', cut);
-    if (tokenStart >= 0) {
-      const tokenEnd = rest.indexOf('_END', tokenStart) + 4;
-      if (tokenEnd > cut) cut = tokenStart || tokenEnd;
-    }
-    if (/[\uD800-\uDBFF]/.test(rest.charAt(cut - 1))) cut--;
-    pieces.push(rest.slice(0, cut));
-    rest = rest.slice(cut);
+/** Keep fitting Markdown ranges intact; subdivide oversized blocks within the HTTP budget. */
+export function splitText({ text, blocks, inlines }: ProtectedText, limit = 1700): string[] {
+  if (text.length <= limit) return text ? [text] : [];
+  // Parser ranges nest. Keep the outermost ranges that fit, exposing smaller
+  // paragraphs, table heads/rows and inline spans only inside oversized blocks.
+  const intact: Span[] = [];
+  for (const span of [...blocks, ...inlines].filter(span => span.end - span.start <= limit)
+    .sort((a, b) => a.start - b.start || b.end - a.end)) {
+    if (span.start >= (intact.at(-1)?.end ?? 0)) intact.push(span);
   }
-  if (rest) pieces.push(rest);
+  const beforeRange = (cut: number): number => {
+    const span = intact[firstAt(intact, cut) - 1];
+    return span && cut < span.end ? span.start : cut;
+  };
+  const boundaries = [...new Set(blocks.flatMap(span => [span.start, span.end]))].sort((a, b) => a - b);
+  const pieces: string[] = [];
+  let start = 0;
+  while (text.length - start > limit) {
+    const ceiling = beforeRange(start + limit), minimum = start + limit / 2;
+    let cut = 0, low = 0, high = boundaries.length;
+    while (low < high) {
+      const mid = (low + high) >>> 1;
+      if (boundaries[mid]! <= ceiling) low = mid + 1;
+      else high = mid;
+    }
+    for (let i = low - 1; i >= 0 && boundaries[i]! > minimum; i--) {
+      if (beforeRange(boundaries[i]!) === boundaries[i]) { cut = boundaries[i]!; break; }
+    }
+    // Oversized paragraphs/rows fall back to lines, then prose boundaries.
+    for (const line of [true, false]) {
+      if (cut) break;
+      for (let i = ceiling; i > minimum; i--) {
+        const boundary = line ? text[i - 1] === '\n'
+          : text[i - 1] === ' ' || text[i - 1] === '\u3002' || text[i - 1] === '.' && text[i] === ' ';
+        if (boundary && beforeRange(i) === i) { cut = i; break; }
+      }
+    }
+    cut ||= ceiling;
+    while (cut < ceiling && /\s/.test(text[cut]!) && beforeRange(cut + 1) === cut + 1) cut++;
+    // Hard subdivision still preserves Unicode and CRLF line endings.
+    if (/[\uD800-\uDBFF]/.test(text.charAt(cut - 1)) || text[cut - 1] === '\r' && text[cut] === '\n') cut--;
+    pieces.push(text.slice(start, cut));
+    start = cut;
+  }
+  if (start < text.length) pieces.push(text.slice(start));
   return pieces;
 }
 

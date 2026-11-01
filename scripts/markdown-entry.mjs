@@ -5,6 +5,9 @@ const gfmSyntax = gfm();
 const protectedTypes = new Set(['codeFenced', 'codeIndented', 'codeText', 'link', 'image', 'definition', 'autolink',
   'gfmFootnoteCall', 'gfmFootnoteDefinitionLabel', 'bilingualLiteral']);
 const emphasisTypes = new Set(['strong', 'emphasis', 'strikethrough']);
+const blockTypes = new Set(['paragraph', 'atxHeading', 'setextHeading', 'thematicBreak', 'htmlFlow',
+  'blockQuote', 'listOrdered', 'listUnordered', 'gfmFootnoteDefinition', 'table', 'tableHead', 'tableRow',
+  'tableDelimiterRow']);
 
 /** Recognize translation literals only where the Markdown parser allows prose. */
 function literals(literalAt) {
@@ -43,7 +46,7 @@ function literals(literalAt) {
 
 /** Positions only: never render or serialize the user's original Markdown. */
 export function markdownSpans(source, literalAt, formatting = false) {
-  const out = { literals: [], marks: [], tables: [] };
+  const out = { literals: [], marks: [], tables: [], blocks: [] };
   const extensions = [gfmSyntax, literals(literalAt)];
   if (formatting) extensions.push({ disable: { null: ['protocolAutolink'] } });
   const events = postprocess(parse({ extensions }).document().write(preprocess()(source, undefined, true)));
@@ -52,6 +55,11 @@ export function markdownSpans(source, literalAt, formatting = false) {
     if (kind !== 'enter') continue;
     const start = token.start.offset, end = token.end.offset;
     if (start < protectedEnd) continue;
+    if (blockTypes.has(token.type)) {
+      // Include quote/list prefixes with their content. tableHead keeps the
+      // header and delimiter together even when the table must be subdivided.
+      out.blocks.push({ start: source.lastIndexOf('\n', start - 1) + 1, end });
+    }
     if (protectedTypes.has(token.type)) {
       out.literals.push({ start, end });
       protectedEnd = end;

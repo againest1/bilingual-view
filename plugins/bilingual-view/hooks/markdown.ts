@@ -4,5 +4,6 @@ export type MarkdownSpans = {
   literals: Span[];
   marks: Array<Span & { open: number; closing: boolean }>;
   tables: Span[];
+  blocks: Span[];
 };
 export { markdownSpans } from './vendor/markdown.js';
