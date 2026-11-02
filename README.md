@@ -49,6 +49,8 @@ Write prompts in Chinese, send them in English by default, and read replies in C
 
 你需要一个**支持 Mods 的 Claude Code 交互式终端或 Desktop 会话**，以及可用的翻译服务、模型和 API 密钥（如需）。
 
+**终端会话请先运行 `/tui fullscreen` 切换到全屏模式，才能用鼠标点击设置栏及消息控件。** 详见[终端模式与鼠标点击](USAGE.md#终端模式与鼠标点击)。
+
 ### 1 · 安装插件
 
 在系统终端运行：

@@ -8,10 +8,22 @@
 
 ## 使用要求
 
-- 支持 Mods 的 Claude Code 交互式终端会话或 Desktop 会话。本文介绍的显示与设置控件可在这些界面中使用。
+- 支持 Mods 的 Claude Code 交互式终端会话或 Desktop 会话。
 - 兼容 OpenAI Chat Completions 接口的翻译服务、翻译模型，以及该服务要求的 API 密钥（如需）。
 
 安装插件后即可在 Claude Code 中使用，无需另外安装运行环境或启动辅助服务。
+
+### 终端模式与鼠标点击
+
+**终端会话请使用 fullscreen（全屏模式），才能用鼠标点击本 Mod 的控件。** 在 Claude Code 会话中运行：
+
+```text
+/tui fullscreen
+```
+
+切换后，可点击输入框上方的 **Settings（设置）** 打开设置，也可使用设置栏中的开关，以及消息下方的原文／译文切换和 **Retry translation（重试翻译）** 控件。若提示需要重启，请重新启动 Claude Code 后再试。
+
+`/tui default` 是经典终端模式：这些控件虽然可见，但鼠标点击不会生效。自动翻译仍可工作。Desktop 会话无需切换终端模式。
 
 ## 安装
 
