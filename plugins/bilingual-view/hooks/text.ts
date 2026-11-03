@@ -227,23 +227,31 @@ export function restoreText(translated: string, protectedText: ProtectedText): s
   return translated.replace(tokenPattern, (_, n: string) => values[Number(n)] ?? '');
 }
 
-/** Display copies only: repair colon-ended bold headings joined to prose. */
+/** Display copies only: separate punctuation-ended bold text from following prose. */
 export function translatedChineseDisplay(source: string): string {
-  // Only a colon-ended bold heading touching prose can need a separator.
-  if (!/[:\uff1a]\*\*[\p{L}\p{N}]/u.test(source)) return source;
+  if (!/\p{P}\*\*[\p{L}\p{N}]/u.test(source)) return source;
   const protectedText = protectText(source);
-  const { text, prefix, values } = protectedText;
+  const { text, prefix, values, inlines } = protectedText;
   const token = new RegExp('^' + prefix + '(\\d+)_END');
-  const display = text.replace(/(?<!\*)\*\*(?=\S)([^\r\n*]+[:\uff1a])\*\*(?=[\p{L}\p{N}])/gu, (match, _title, at: number) => {
+  const closingDelimiters = new Set(inlines.map(span => span.end - 2));
+  const pattern = /(?<!\*)\*\*(?=\S)([^\r\n*]+\p{P})\*\*(?=[\p{L}\p{N}])/gu;
+  let display = '', cursor = 0;
+  for (let match; (match = pattern.exec(text));) {
+    const at = match.index, end = at + match[0].length;
+    // A valid closing delimiter can look like an opener before the next bold
+    // sentence. Skip it, but still examine that sentence's opening delimiter.
+    pattern.lastIndex = at + 2;
+    if (closingDelimiters.has(at)) continue;
     const line = text.slice(text.lastIndexOf('\n', at - 1) + 1, at).replace(/^(?: {0,3}> ?)+/, '');
-    if (/^(?: {4}|\t)/.test(line) || escapedAt(text, at) || escapedAt(text, at + match.length - 3)) return match;
+    if (/^(?: {4}|\t)/.test(line) || escapedAt(text, at) || escapedAt(text, end - 2) || escapedAt(text, end - 3)) continue;
     // A placeholder starts with a letter, but its literal may start with a
     // backtick or math delimiter, which does not need this prose separator.
-    const next = text.slice(at + match.length).match(token);
-    if (next && !/^[\p{L}\p{N}]/u.test(values[Number(next[1])]!)) return match;
-    return match + ' ';
-  });
-  return display === text ? source : restoreText(display, protectedText);
+    const next = text.slice(end).match(token);
+    if (next && !/^[\p{L}\p{N}]/u.test(values[Number(next[1])]!)) continue;
+    display += text.slice(cursor, end) + ' ';
+    cursor = end; pattern.lastIndex = end;
+  }
+  return cursor === 0 ? source : restoreText(display + text.slice(cursor), protectedText);
 }
 
 function prose(protectedText: ProtectedText): string {
