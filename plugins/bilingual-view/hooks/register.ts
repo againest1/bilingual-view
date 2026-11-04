@@ -132,8 +132,15 @@ function messageDrawing($: EngineInterface, e: RenderInput<'UserMessage' | 'Assi
 
 async function saveSetting($: EngineInterface, options: Record<string, PluginOptions[string]>, tests: ProviderTests,
   listing: ModelListing, field: string, value: string | boolean) {
+  if (field === 'base_url' && value) {
+    try { providerConfig(String(value), '_', ''); }
+    catch (error) {
+      // Local validation can explain the correction without exposing host write errors.
+      await $.ui.toast('Provider URL was not saved. ' + (error instanceof Error ? error.message : 'Check the Provider URL format.'));
+      return;
+    }
+  }
   try {
-    if (field === 'base_url' && value) providerConfig(String(value), '_', '');
     const result = await $.config.set({ key: $.plugin.name + '.' + field, value });
     if (result.deny) await $.ui.toast(result.deny);
     else {

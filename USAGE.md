@@ -57,6 +57,8 @@ claude plugin install bilingual-view@bilingual-view
 
 Provider URL 也可以填写完整的 `/chat/completions` 地址，**不要填写 `/models` 地址**。模型列表不可用时，直接填写 Model ID 即可。
 
+地址必须以 `http://` 或 `https://` 开头，且不能含用户名、密码、查询参数或片段（`#...`）；API 密钥请填在独立字段。出现 **Provider URL was not saved（服务地址未保存）** 时，按提示在当前字段修正后按 **Enter** 保存；保存成功前继续沿用原设置。
+
 保存后，可在输入框上方设置栏的末尾核对模型和思考强度，例如 `my-model (low)`。看到 **Setup required（需要配置）** 时，请打开设置，补齐提示中列出的 **Provider URL** 或 **Model ID**。
 
 ### 设置思考强度
