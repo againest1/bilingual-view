@@ -315,15 +315,16 @@ export const register: Register = (on, configuredOptions) => {
   // after a successful save, so the UI and requests use the same values without a reload.
   const options = { ...configuredOptions };
   const state = newState();
-  // Weak keys follow the existing record/block lifetime. Cache only derived
-  // display data, never modify saved text or keep a separate history cache.
-  const displayChecks = new WeakMap<RecordEntry, { source: string; needed: boolean }>();
+  // Weak keys follow existing records, blocks and final-message references.
+  // Untranslated final replies have no record; reuse their eligibility too.
+  // Cache only derived display data, without modifying saved text.
+  const displayChecks = new WeakMap<RecordEntry | FinalAnswerRef, { source: string; needed: boolean }>();
   const displayCopies = new WeakMap<Block, { raw: string; display: string }>();
-  const displayNeedsTranslation = (record: RecordEntry | null, source: string): boolean => {
-    const cached = record && displayChecks.get(record);
+  const displayNeedsTranslation = (entry: RecordEntry | FinalAnswerRef | null, source: string): boolean => {
+    const cached = entry && displayChecks.get(entry);
     if (cached && cached.source === source) return cached.needed;
     const needed = needsDisplayTranslation(source);
-    if (record) displayChecks.set(record, { source, needed });
+    if (entry) displayChecks.set(entry, { source, needed });
     return needed;
   };
   const translatedBlock = (block: Block): string => {
@@ -598,7 +599,7 @@ export const register: Register = (on, configuredOptions) => {
       record = await displayRecord(hostIO($), state, ref);
       if (state.view !== view) { outcome = 'view_changed'; return next(e); }
       let needsChinese = !ready(record)
-        && displayNeedsTranslation(record, (record?.blocks.map(block => block.source) ?? ref.sources).join('\n\n'));
+        && displayNeedsTranslation(record ?? ref, (record?.blocks.map(block => block.source) ?? ref.sources).join('\n\n'));
       if (ready(record) || !needsChinese) view.visible.delete(e.requestId);
       // As with user rows, only discover work on entry. The shared poller
       // handles recovery; ordinary redraws need no fresh cache read.
