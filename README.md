@@ -82,7 +82,7 @@ claude plugin install bilingual-view@bilingual-view
 | --- | --- |
 | **Provider URL** | 服务的 API 基础地址，例如 `https://provider.example/v1`。也支持完整的 `/chat/completions` 地址，不要填写 `/models` 地址。 |
 | **API key** | 服务要求的密钥；无需身份验证时可不填。 |
-| **Model ID** | 输入翻译模型标识，或点击 **Fetch models** 从列表选择。 |
+| **Model ID** | 输入翻译模型标识，或点击 **Fetch models** [查找并选择模型](USAGE.md#配置)。 |
 
 需要翻译的文本会发送到这个服务。模型列表不可用时，可直接填写 Model ID。
 

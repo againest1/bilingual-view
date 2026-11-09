@@ -73,7 +73,9 @@ function switchView(state: State, session: string, path?: string): void {
   // Accepted display work belongs to the instance, not the current view.
 }
 
-type ModelListing = { version: number; models: string[]; loading: boolean; error: string };
+// The host accepts at most 64 Select options. Reserve one for the current model.
+const MODEL_PAGE_SIZE = 63;
+type ModelListing = { version: number; models: string[]; loading: boolean; error: string; query: string; page: number };
 type ProviderTest = { running: boolean; result: string };
 type ProviderTests = { version: number; connection: ProviderTest; speed: ProviderTest };
 
@@ -82,6 +84,8 @@ function clearModelListing(listing: ModelListing): void {
   listing.models = [];
   listing.loading = false;
   listing.error = '';
+  listing.query = '';
+  listing.page = 0;
 }
 
 function clearTestResults(tests: ProviderTests): void {
@@ -162,7 +166,10 @@ async function loadModels($: EngineInterface, options: PluginOptions, listing: M
   listing.loading = true; listing.error = ''; $.ui.invalidate('ui.render');
   try {
     const models = await fetchModels(hostIO($), { ...options });
-    if (version === listing.version) listing.models = models;
+    if (version === listing.version) {
+      listing.models = models;
+      listing.page = 0;
+    }
   } catch (error) {
     if (version === listing.version) listing.error = error instanceof Error ? error.message : 'Could not fetch models. You can still enter a model ID manually.';
   } finally {
@@ -335,7 +342,7 @@ export const register: Register = (on, configuredOptions) => {
     return display;
   };
   // Ephemeral UI data only. All settings are written through the host's userConfig.
-  const listing: ModelListing = { version: 0, models: [], loading: false, error: '' };
+  const listing: ModelListing = { version: 0, models: [], loading: false, error: '', query: '', page: 0 };
   const tests: ProviderTests = { version: 0,
     connection: { running: false, result: '' }, speed: { running: false, result: '' } };
 
@@ -692,7 +699,16 @@ export const register: Register = (on, configuredOptions) => {
     if (e.surface !== 'terminal' && e.surface !== 'desktop') return next(e);
     const config = await effectiveSettings(hostIO($), options);
     const { Box, Text, Button, Input, Select } = $.ui.resolve(e);
-    const choices = [...new Set([config.model, ...listing.models].filter(Boolean))];
+    const query = listing.query.toLowerCase();
+    const matches = listing.models.filter(model => model.toLowerCase().includes(query));
+    const pages = Math.max(1, Math.ceil(matches.length / MODEL_PAGE_SIZE));
+    const page = Math.min(listing.page, pages - 1);
+    const choices = [...new Set([config.model, ...matches.slice(page * MODEL_PAGE_SIZE, (page + 1) * MODEL_PAGE_SIZE)].filter(Boolean))];
+    const searchModels = (query: string) => {
+      listing.query = query.trim();
+      listing.page = 0;
+      $.ui.invalidate('ui.render');
+    };
     const hint = setupHint(config.baseUrl, config.model);
     return Box({ flexDirection: 'column', gap: 1, children: [
       Box({ flexDirection: 'column', children: [
@@ -705,7 +721,7 @@ export const register: Register = (on, configuredOptions) => {
         ] : []),
         ...(!config.enabled ? [Text({ children: 'Input is sent unchanged; messages show their original text.' })] : []),
         ...(hint ? [Text({ children: hint })] : []),
-        Text({ dimColor: true, children: 'Press Enter to save fields; selections save immediately.' }),
+        Text({ dimColor: true, children: 'Press Enter to save settings or search; selections save immediately.' }),
       ] }),
       Box({ flexDirection: 'column', children: [
         Text({ bold: true, children: '1 · Translation service' }),
@@ -732,9 +748,22 @@ export const register: Register = (on, configuredOptions) => {
         Input({ key: 'bv-model', label: 'Model ID', value: config.model, submitLabel: 'Save',
           onSubmit: value => saveSetting($, options, tests, listing, 'model', value.trim()) }),
         Button({ key: 'bv-models', label: listing.loading ? 'Fetching models...' : 'Fetch models', onPress: () => loadModels($, options, listing) }),
+        ...(listing.models.length ? [Input({ key: 'bv-model-search', label: 'Search models', value: listing.query,
+          placeholder: 'Part of a model name; Enter to search', submitLabel: 'Search', onSubmit: searchModels })] : []),
         ...(listing.models.length && choices.length ? [Select({ key: 'bv-model-select', label: 'Select model', value: config.model,
-          options: choices.map(value => ({ value, label: value })), onSelect: value => saveSetting($, options, tests, listing, 'model', value) })] : []),
-        Text({ dimColor: true, children: listing.error || (listing.models.length ? `${listing.models.length} models. Select one or enter a Model ID.` : 'Enter a Model ID, or fetch models from your Provider.') }),
+          options: choices.map(value => ({ value, label: value === config.model ? `${value} (current)` : value })),
+          onSelect: value => saveSetting($, options, tests, listing, 'model', value) })] : []),
+        Text({ dimColor: true, children: listing.error || (listing.models.length
+          ? matches.length ? `${listing.query ? `${matches.length} of ` : ''}${listing.models.length} models. Page ${page + 1} of ${pages}.`
+            : 'No matching models. Clear the search or enter a Model ID.'
+          : 'Enter a Model ID, or fetch models from your Provider.') }),
+        ...(listing.models.length && (pages > 1 || listing.query) ? [Box({ flexDirection: 'row', flexWrap: 'wrap', gap: 1, children: [
+          ...(page > 0 ? [Button({ key: 'bv-model-prev', label: 'Previous page',
+            onPress: () => { listing.page = page - 1; $.ui.invalidate('ui.render'); } })] : []),
+          ...(page + 1 < pages ? [Button({ key: 'bv-model-next', label: 'Next page',
+            onPress: () => { listing.page = page + 1; $.ui.invalidate('ui.render'); } })] : []),
+          ...(listing.query ? [Button({ key: 'bv-model-clear', label: 'Clear search', onPress: () => searchModels('') })] : []),
+        ] })] : []),
         Select({ key: 'bv-effort', label: 'Effort', value: config.effort,
           options: REASONING_EFFORTS.map(value => ({ value, label: value === 'default' ? 'Provider default' : value })),
           onSelect: value => saveSetting($, options, tests, listing, 'effort', value) }),

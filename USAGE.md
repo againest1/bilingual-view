@@ -80,9 +80,13 @@ Provider URL 也可以填写完整的 `/chat/completions` 地址，**不要填�
 更改服务地址、密钥、模型或思考强度后，旧的连接和测速结果会清除，请重新测试。
 
 <details>
-<summary><strong>更新模型列表或更换密钥</strong></summary>
+<summary><strong>查找模型、更新列表或更换密钥</strong></summary>
 
 需要更新模型列表时，点击 **Fetch models（获取模型列表）**。更换服务地址或密钥后，请重新获取列表并选择可用模型，或手动填写新服务支持的 Model ID。
+
+获取列表后，在 **Search models（搜索模型）** 中输入模型名称的一部分，按 **Enter** 筛选，不区分大小写。结果较多时，用 **Previous page（上一页）**／**Next page（下一页）** 浏览。当前模型标注为 **(current)**，保留在列表首项；搜索和翻页不会更换模型，从 **Select model（选择模型）** 中选择才会保存。
+
+看到 **No matching models（没有匹配的模型）** 时，可以修改搜索内容，或点击 **Clear search（清空搜索）** 恢复完整列表。也可直接填写 Model ID 并按 **Enter** 保存。
 
 更换密钥时，输入新值并按 **Enter** 保存。留空提交不会删除原有密钥。若无法保存，可运行 `/plugin`，选择本插件的 **Configure（配置）** 填写。
 
