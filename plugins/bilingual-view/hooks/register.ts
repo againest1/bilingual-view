@@ -302,9 +302,10 @@ function questionDrawing($: EngineInterface, e: RenderInput<'AskUserQuestion' | 
   drawing: RenderElement, record: RecordEntry | null, state: State, options: PluginOptions, view: State['view']): RenderElement {
   if (!record || ready(record)) return drawing;
   const { Box, Text, Button } = $.ui.resolve(e);
-  const failed = record.blocks.some(block => block.status === 'error');
+  const failed = record.blocks.find(block => block.status === 'error');
   const controls = [
     Text({ dimColor: true, children: failed ? 'Question translation failed. You can still use the original text.' : 'Translating questions...' }),
+    ...(failed?.error ? [Text({ dimColor: true, children: failed.error })] : []),
     ...(failed ? [Button({ key: 'bv-question-retry-' + e.component + ':' + e.requestId, label: 'Retry translation', onPress: async () => {
       await ensureTranslation(hostIO($), state, options, { kind: 'question', session: view.session,
         id: questionId(e.requestId), sources: record.blocks.map(block => block.source) }, true,
