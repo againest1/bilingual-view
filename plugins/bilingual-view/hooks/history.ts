@@ -1,7 +1,14 @@
 import type { RuntimeIO } from './ports.ts';
 import type { FinalAnswerRef, State, View } from './state.ts';
-import { outputWorkKey, readRecord } from './storage.ts';
-import type { RecordReader } from './storage.ts';
+import { firstBlockRenderId, outputWorkKey, readRecord, sessionRecordReader } from './storage.ts';
+
+export function rememberFinal(view: View, ref: FinalAnswerRef): void {
+  view.finals.set(ref.id, ref);
+  // The persisted assistant rows use one UUID per content block. A grouped
+  // record cannot establish which content index belongs to a rendered row.
+  const renderId = ref.sources.length === 1 ? firstBlockRenderId(ref.id) : undefined;
+  if (renderId) view.finals.set(renderId, ref);
+}
 
 /** Identify final answers from request structure and completed-turn markers. */
 export function indexFinalAnswers(jsonl: string): Map<string, FinalAnswerRef> {
@@ -70,7 +77,7 @@ export async function refreshHistory(io: RuntimeIO, state: State, view: View): P
     const refs = indexFinalAnswers(jsonl);
     let added = false;
     for (const [id, ref] of refs) if (!view.finals.has(id)) {
-      view.finals.set(id, { ...ref, session: view.session });
+      rememberFinal(view, { ...ref, session: view.session });
       added = true;
     }
     view.historyStamp = stamp;
@@ -84,16 +91,23 @@ export async function refreshHistory(io: RuntimeIO, state: State, view: View): P
 
 /** Existing final-only display records also provide evidence after a restart. */
 export async function referenceFor(io: RuntimeIO, state: State, view: View, id: string,
-  fresh = false, read: RecordReader = key => readRecord(io, state, view.session, key, fresh)): Promise<FinalAnswerRef | undefined> {
+  records?: ReturnType<typeof sessionRecordReader>): Promise<FinalAnswerRef | undefined> {
   const known = view.finals.get(id);
   if (known) return known;
   for (const key of [id, outputWorkKey(id)]) {
-    const record = await read(key);
+    const record = await (records ? records.read(key) : readRecord(io, state, view.session, key));
     if (state.view !== view) return;
     if (record?.kind === 'assistant') {
       const ref: FinalAnswerRef = { kind: 'assistant', id, sources: record.blocks.map(b => b.source), session: view.session };
-      view.finals.set(id, ref);
+      rememberFinal(view, ref);
       return ref;
     }
   }
+  if (!records || firstBlockRenderId(id) !== id) return;
+  const saved = await records.findAssistant(id);
+  if (!saved || state.view !== view) return;
+  const ref: FinalAnswerRef = { kind: 'assistant', id: saved.id,
+    sources: saved.record.blocks.map(b => b.source), session: view.session };
+  rememberFinal(view, ref);
+  return ref;
 }

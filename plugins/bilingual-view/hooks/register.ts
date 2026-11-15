@@ -5,9 +5,9 @@ import { newState, newView } from './state.ts';
 import { finalBlocks, prepareTranslation, needsDisplayTranslation, textBlocks, translatedChineseDisplay } from './text.ts';
 import { aborted, inputFailure, requestTranslation, translate } from './translation.ts';
 import { TRANSLATION_SPEED_SAMPLE } from './speed-sample.ts';
-import { memoryKey, outputWorkKey, readRecord, saveRecord } from './storage.ts';
+import { firstBlockRenderId, memoryKey, outputWorkKey, readRecord, saveRecord, sessionRecordReader } from './storage.ts';
 import { ensureTranslation, displayRecord, pollVisible, ready } from './tasks.ts';
-import { referenceFor, refreshHistory } from './history.ts';
+import { referenceFor, refreshHistory, rememberFinal } from './history.ts';
 import { effectiveSettings, enabled, translateBeforeSend, fetchModels, SETTINGS_PANE } from './settings.ts';
 import { providerConfig, reasoningEffort, REASONING_EFFORTS } from './provider.ts';
 import { questionId, answerId, questionSource, drawQuestions, drawQuestionResult, translateAnswers } from './questions.ts';
@@ -500,7 +500,7 @@ export const register: Register = (on, configuredOptions) => {
     }
     for (const [id, ref] of grouped) {
       state.diagnostics.record('final', view.session, id, 'identified', { count: ref.sources.length });
-      if (state.view === view) view.finals.set(id, ref);
+      if (state.view === view) rememberFinal(view, ref);
       await ensureTranslation(hostIO($), state, options, ref);
     }
     if (state.view === view) $.ui.invalidate('ui.render');
@@ -602,9 +602,12 @@ export const register: Register = (on, configuredOptions) => {
       const wasVisible = view.visible.get(e.requestId)?.kind === 'assistant';
       if (e.props.onScreen === null) view.visible.delete(e.requestId);
       else if (e.props.onScreen) view.visible.set(e.requestId, { kind: 'assistant', id: e.requestId, text: e.props.text });
-      const ref = await referenceFor(hostIO($), state, view, e.requestId);
+      const io = hostIO($);
+      const records = e.props.onScreen && !wasVisible && firstBlockRenderId(e.requestId) === e.requestId
+        ? sessionRecordReader(io, state, view.session) : undefined;
+      const ref = await referenceFor(io, state, view, e.requestId, records);
       if (!ref || state.view !== view) { outcome = state.view !== view ? 'view_changed' : 'no_final_reference'; return next(e); }
-      record = await displayRecord(hostIO($), state, ref);
+      record = await displayRecord(io, state, ref);
       if (state.view !== view) { outcome = 'view_changed'; return next(e); }
       let needsChinese = !ready(record)
         && displayNeedsTranslation(record ?? ref, (record?.blocks.map(block => block.source) ?? ref.sources).join('\n\n'));
@@ -612,10 +615,10 @@ export const register: Register = (on, configuredOptions) => {
       // As with user rows, only discover work on entry. The shared poller
       // handles recovery; ordinary redraws need no fresh cache read.
       else if (e.props.onScreen && !wasVisible) {
-        const ensured = await ensureTranslation(hostIO($), state, options, ref, false,
-          () => state.view === view && view.visible.get(ref.id)?.kind === 'assistant');
+        const ensured = await ensureTranslation(io, state, options, ref, false,
+          () => state.view === view && view.visible.get(e.requestId)?.kind === 'assistant');
         record = ensured.record ?? record;
-        if (ensured.status === 'skipped') { needsChinese = false; view.visible.delete(ref.id); }
+        if (ensured.status === 'skipped') { needsChinese = false; view.visible.delete(e.requestId); }
       }
       if (state.view !== view) { outcome = 'view_changed'; return next(e); }
       if (!record) { outcome = 'no_record'; return next(e); }

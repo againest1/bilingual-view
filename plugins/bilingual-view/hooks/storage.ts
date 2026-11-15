@@ -3,10 +3,18 @@ import type { RecordEntry, State } from './state.ts';
 import { diagnosticStatus } from './diagnostics.ts';
 
 const PREFIX = 'bilingual-view.v1.';
+const OUTPUT_PREFIX = 'output:';
+const UUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
 export const CACHE_FILE_MAX_BYTES = 4 * 1024 * 1024;
-export const outputWorkKey = (id: string): string => 'output:' + id;
+export const outputWorkKey = (id: string): string => OUTPUT_PREFIX + id;
 export const memoryKey = (session: string, id: string): string => JSON.stringify([session, id]);
 export type RecordReader = (id: string) => Promise<RecordEntry | null>;
+
+/** Claude may replace a display row's UUID tail with its content-block index. */
+export function firstBlockRenderId(id: string): string | undefined {
+  return UUID.test(id) ? id.slice(0, -12) + '000000000000' : undefined;
+}
+
 export function cacheFilePath(session: string): string {
   if (!session) throw new Error('Missing cache session');
   return 'cache/' + encodeURIComponent(session) + '.json';
@@ -81,10 +89,11 @@ function rememberRecord(state: State, session: string, id: string, saved: unknow
 }
 
 /** Reuse one parsed session file for a batch of queries, never for writes. */
-export function sessionRecordReader(io: StorageIO, state: State, session: string): RecordReader {
+export function sessionRecordReader(io: StorageIO, state: State, session: string) {
   let afterWrites: Promise<unknown> | undefined;
   let snapshot: Promise<Record<string, unknown>> | undefined;
-  return async id => {
+
+  async function lookup<T>(id: string, select: (file: Record<string, unknown> | undefined) => T): Promise<T> {
     for (;;) {
       const writes = state.cacheWrites;
       if (!snapshot || afterWrites !== writes) {
@@ -100,8 +109,23 @@ export function sessionRecordReader(io: StorageIO, state: State, session: string
       // Task progress or an input save may write while this batch is reading.
       // Wait for that write and reload before returning an older record.
       if (writes !== state.cacheWrites) continue;
-      return rememberRecord(state, session, id, file?.[PREFIX + id]);
+      return select(file);
     }
+  }
+
+  return {
+    read: (id: string) => lookup(id, file => rememberRecord(state, session, id, file?.[PREFIX + id])),
+    findAssistant: (renderId: string) => lookup(renderId, file => {
+      for (const [key, record] of Object.entries(file ?? {})) {
+        if (!key.startsWith(PREFIX)) continue;
+        const cacheId = key.slice(PREFIX.length);
+        const id = cacheId.startsWith(OUTPUT_PREFIX) ? cacheId.slice(OUTPUT_PREFIX.length) : cacheId;
+        if (id === renderId || firstBlockRenderId(id) !== renderId || !validRecord(record)
+          || record.kind !== 'assistant' || record.blocks.length !== 1) continue;
+        rememberRecord(state, session, cacheId, record);
+        return { id, record };
+      }
+    }),
   };
 }
 

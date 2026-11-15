@@ -190,29 +190,30 @@ export async function pollVisible(io: RuntimeIO, state: State, options: PluginOp
   let changed = false;
   try {
     if (!view.visible.size) return;
-    const read = sessionRecordReader(io, state, view.session);
+    const records = sessionRecordReader(io, state, view.session);
     let checkedHistory = false;
     for (const [id, item] of [...view.visible]) {
       if (state.view !== view) return;
       const stillVisible = () => state.view === view && view.visible.get(id)?.kind === item.kind;
       if (!stillVisible()) continue;
-      const previous = cachedDisplayRecord(state, { ...item, session: view.session });
-      const previousTask = state.output.jobs.get(memoryKey(view.session, id))?.status;
-      const hadReference = item.kind !== 'assistant' || view.finals.has(id);
+      const known = item.kind === 'assistant' ? view.finals.get(id) : undefined;
+      const previous = cachedDisplayRecord(state, known ?? { ...item, session: view.session });
+      const previousTask = state.output.jobs.get(memoryKey(view.session, known?.id ?? id))?.status;
+      const hadReference = item.kind !== 'assistant' || !!known;
       let ref: DisplayMessageRef | undefined = item.kind === 'assistant'
-        ? await referenceFor(io, state, view, id, true, read)
+        ? await referenceFor(io, state, view, id, records)
         : { kind: item.kind, id, sources: [item.text], session: view.session };
       // Known live/cache references need no transcript scan. One missing
       // reference can refresh the index for all remaining assistant rows.
       if (!ref && !checkedHistory && stillVisible()) {
         checkedHistory = true;
         await refreshHistory({ ...io, invalidate: () => { changed = true; } }, state, view);
-        if (stillVisible()) ref = await referenceFor(io, state, view, id, true, read);
+        if (stillVisible()) ref = await referenceFor(io, state, view, id, records);
       }
       if (!ref || !stillVisible()) continue;
       // Only queries share the snapshot. Accepted tasks retain the real IO
       // and continue to redraw on progress after this poll has returned.
-      const result = await ensureTranslation(io, state, options, ref, false, stillVisible, read);
+      const result = await ensureTranslation(io, state, options, ref, false, stillVisible, records.read);
       if (state.view !== view) return;
       if (!stillVisible()) continue;
       if (result.status === 'ready' || result.status === 'skipped') {
