@@ -2,6 +2,7 @@ import type { ButtonProps, EngineInterface, Register, PluginOptions, RenderEleme
 import type { RuntimeIO } from './ports.ts';
 import type { Block, DisplayMessageRef, FinalAnswerRef, State, RecordEntry } from './state.ts';
 import { newState, newView } from './state.ts';
+import { MemoryCache } from './memory.ts';
 import { finalBlocks, prepareTranslation, needsDisplayTranslation, textBlocks, translatedChineseDisplay } from './text.ts';
 import { aborted, inputFailure, requestTranslation, translate } from './translation.ts';
 import { TRANSLATION_SPEED_SAMPLE } from './speed-sample.ts';
@@ -327,12 +328,18 @@ export const register: Register = (on, configuredOptions) => {
   // Untranslated final replies have no record; reuse their eligibility too.
   // Cache only derived display data, without modifying saved text.
   const displayChecks = new WeakMap<RecordEntry | FinalAnswerRef, { source: string; needed: boolean }>();
+  // Raw user rows have no stable reference. Eligibility depends only on text;
+  // bound these source keys independently of translation records and sessions.
+  const unrecordedChecks = new MemoryCache<boolean>(128, 256 * 1024);
   const displayCopies = new WeakMap<Block, { raw: string; display: string }>();
   const displayNeedsTranslation = (entry: RecordEntry | FinalAnswerRef | null, source: string): boolean => {
     const cached = entry && displayChecks.get(entry);
     if (cached && cached.source === source) return cached.needed;
+    const unrecorded = !entry ? unrecordedChecks.get(source) : undefined;
+    if (unrecorded !== undefined) return unrecorded;
     const needed = needsDisplayTranslation(source);
     if (entry) displayChecks.set(entry, { source, needed });
+    else unrecordedChecks.set(source, needed);
     return needed;
   };
   const translatedBlock = (block: Block): string => {
