@@ -35,10 +35,13 @@ export type View = {
   dialog?: string;
   inputTranslations: Set<{ visible: boolean }>;
   finals: Map<string, FinalAnswerRef>;
+  userOriginalIds: Map<string, string>;
+  userOriginalsLoaded?: Promise<void>;
   visible: Map<string, { kind: 'user' | 'assistant' | 'question'; id: string; text: string }>;
 };
 export function newView(session: string, path?: string): View {
-  return { session, path, loadingHistory: false, inputTranslations: new Set(), finals: new Map(), visible: new Map() };
+  return { session, path, loadingHistory: false, inputTranslations: new Set(), finals: new Map(),
+    userOriginalIds: new Map(), visible: new Map() };
 }
 
 export type State = {

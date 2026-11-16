@@ -1,5 +1,5 @@
 import type { StorageIO } from './ports.ts';
-import type { RecordEntry, State } from './state.ts';
+import type { RecordEntry, State, View } from './state.ts';
 import { diagnosticStatus } from './diagnostics.ts';
 
 const PREFIX = 'bilingual-view.v1.';
@@ -28,6 +28,17 @@ function validRecord(value: unknown): value is RecordEntry {
     && Array.isArray(r.blocks) && r.blocks.length <= 128 && r.blocks.every(b => b
       && typeof b.source === 'string' && typeof b.display === 'string'
       && ['ready', 'pending', 'error'].includes(b.status));
+}
+
+function isUserOriginal(record: RecordEntry | null): record is RecordEntry {
+  return record?.kind === 'user' && record.chineseSource !== 'translation'
+    && record.blocks.length === 1 && record.blocks[0]?.status === 'ready';
+}
+
+function rememberUserOriginalId(view: View, id: string): void {
+  // All rendered blocks of this message share the UUID prefix.
+  const key = firstBlockRenderId(id);
+  if (key) view.userOriginalIds.set(key, id);
 }
 
 async function readFile(io: StorageIO, path: string): Promise<Record<string, unknown>> {
@@ -115,6 +126,13 @@ export function sessionRecordReader(io: StorageIO, state: State, session: string
 
   return {
     read: (id: string) => lookup(id, file => rememberRecord(state, session, id, file?.[PREFIX + id])),
+    indexUserOriginals: (view: View) => lookup('', file => {
+      for (const [key, record] of Object.entries(file ?? {})) {
+        if (key.startsWith(PREFIX) && validRecord(record) && isUserOriginal(record)) {
+          rememberUserOriginalId(view, key.slice(PREFIX.length));
+        }
+      }
+    }),
     findAssistant: (renderId: string) => lookup(renderId, file => {
       for (const [key, record] of Object.entries(file ?? {})) {
         if (!key.startsWith(PREFIX)) continue;
@@ -141,10 +159,27 @@ export async function readRecord(io: StorageIO, state: State, session: string, i
   return rememberRecord(state, session, id, saved);
 }
 
+export async function userOriginalFor(io: StorageIO, state: State, view: View, renderId: string, text: string) {
+  const key = firstBlockRenderId(renderId);
+  if (!key) return;
+  if (!view.userOriginalIds.has(key)) {
+    // Older sessions have only the original UUID on disk. Build the ID index
+    // once per view so successive rows and redraws share the same discovery.
+    await (view.userOriginalsLoaded ??= sessionRecordReader(io, state, view.session).indexUserOriginals(view));
+  }
+  const id = view.userOriginalIds.get(key);
+  if (!id || id === renderId || state.view !== view) return;
+  const record = await readRecord(io, state, view.session, id);
+  // A sibling block may share the prefix. Match the text of the submitted
+  // block before using the original instead of a backfill at the render ID.
+  if (isUserOriginal(record) && record.blocks[0]?.source === text) return { id, record };
+}
+
 export async function saveRecord(io: StorageIO, state: State, session: string, id: string, record: RecordEntry,
   completeOutput = false): Promise<void> {
   if (completeOutput) state.records.delete(memoryKey(session, outputWorkKey(id)));
   state.records.set(memoryKey(session, id), record);
+  if (session === state.view.session && isUserOriginal(record)) rememberUserOriginalId(state.view, id);
   try { await updateFile(io, state, session, id, record, completeOutput); }
   catch {
     if (record.kind === 'assistant') state.diagnostics.record('cache.write', session, id, 'failed', {}, true);

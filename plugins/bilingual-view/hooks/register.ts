@@ -6,7 +6,7 @@ import { MemoryCache } from './memory.ts';
 import { finalBlocks, prepareTranslation, needsDisplayTranslation, textBlocks, translatedChineseDisplay } from './text.ts';
 import { aborted, inputFailure, requestTranslation, translate } from './translation.ts';
 import { TRANSLATION_SPEED_SAMPLE } from './speed-sample.ts';
-import { firstBlockRenderId, memoryKey, outputWorkKey, readRecord, saveRecord, sessionRecordReader } from './storage.ts';
+import { firstBlockRenderId, memoryKey, outputWorkKey, readRecord, saveRecord, sessionRecordReader, userOriginalFor } from './storage.ts';
 import { ensureTranslation, displayRecord, pollVisible, ready } from './tasks.ts';
 import { referenceFor, refreshHistory, rememberFinal } from './history.ts';
 import { effectiveSettings, enabled, translateBeforeSend, fetchModels, SETTINGS_PANE } from './settings.ts';
@@ -450,7 +450,7 @@ export const register: Register = (on, configuredOptions) => {
     if (e.agentId) return next(e);
     if (e.door === 'prompt' && e.message.type === 'user' && await humanOrigin($, e.origin.kind) && !e.message.isMeta) {
       // Pair the in-flight submission with the UUID Claude assigns here.
-      // Subsequent display/cache/task lookups use that UUID and role only.
+      // Keep this UUID as the identity even if the host derives a render ID.
       const texts = textBlocks(e.message.content);
       const index = state.pending.findIndex(item => item.session === state.session
         && [texts.join(''), texts.join('\n'), texts.join('\n\n')].includes(item.translated));
@@ -525,12 +525,14 @@ export const register: Register = (on, configuredOptions) => {
       return next(e);
     }
     const io = hostIO($);
-    const ref: DisplayMessageRef = { kind: 'user', id: e.requestId, sources: [text], session: view.session };
-    let record = await displayRecord(io, state, ref);
+    const original = await userOriginalFor(io, state, view, e.requestId, text);
+    if (state.view !== view) return next(e);
+    const ref: DisplayMessageRef = { kind: 'user', id: original?.id ?? e.requestId, sources: [text], session: view.session };
+    let record = original?.record ?? await displayRecord(io, state, ref);
     if (state.view !== view) return next(e);
     const source = record?.blocks[0]?.source ?? text;
     if (/^\s*[!/]/.test(source)) {
-      view.visible.delete(ref.id);
+      view.visible.delete(e.requestId);
       return next(e);
     }
     // Legacy records themselves prove a user's input. An unstamped row with
@@ -541,17 +543,17 @@ export const register: Register = (on, configuredOptions) => {
     }
     if (state.view !== view) return next(e);
     let needsChinese = !ready(record) && displayNeedsTranslation(record, source);
-    if (ready(record) || !needsChinese) view.visible.delete(ref.id);
+    if (ready(record) || !needsChinese) view.visible.delete(e.requestId);
     else if (onScreen) {
-      const visible = view.visible.get(ref.id);
+      const visible = view.visible.get(e.requestId);
       if (visible?.kind !== 'user') {
-        view.visible.set(ref.id, { kind: 'user', id: ref.id, text: source });
+        view.visible.set(e.requestId, { kind: 'user', id: ref.id, text: source });
         // Only entering the visible range discovers work here. A toggle just
         // redraws; the shared poller handles deferred admission and recovery.
         const ensured = await ensureTranslation(io, state, options, ref, false,
-          () => state.view === view && view.visible.get(ref.id)?.kind === 'user');
+          () => state.view === view && view.visible.get(e.requestId)?.kind === 'user');
         record = ensured.record ?? record;
-        if (ensured.status === 'skipped') { needsChinese = false; view.visible.delete(ref.id); }
+        if (ensured.status === 'skipped') { needsChinese = false; view.visible.delete(e.requestId); }
       }
     }
     if (state.view !== view) return next(e);
