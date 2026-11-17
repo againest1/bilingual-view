@@ -46,7 +46,7 @@ function literals(literalAt) {
 
 /** Positions only: never render or serialize the user's original Markdown. */
 export function markdownSpans(source, literalAt, formatting = false) {
-  const out = { literals: [], marks: [], tables: [], blocks: [] };
+  const out = { literals: [], autolinks: [], marks: [], tables: [], blocks: [] };
   const extensions = [gfmSyntax, literals(literalAt)];
   if (formatting) extensions.push({ disable: { null: ['protocolAutolink'] } });
   const events = postprocess(parse({ extensions }).document().write(preprocess()(source, undefined, true)));
@@ -83,6 +83,8 @@ export function markdownSpans(source, literalAt, formatting = false) {
     if (protectedTypes.has(token.type)) {
       out.literals.push({ start, end });
       protectedEnd = end;
+    } else if (token.type === 'literalAutolinkHttp') {
+      out.autolinks.push({ start, end });
     } else if (emphasisTypes.has(token.type)) {
       // A paragraph consisting entirely of strong text is a common prose heading.
       if (token.type === 'strong' && parent?.token.type === 'paragraph'

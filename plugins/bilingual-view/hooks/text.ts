@@ -103,6 +103,11 @@ function protectedSpans(source: string, markdown: MarkdownSpans): { spans: Span[
       match = pattern.exec(source); continue;
     } else if (group.url || group.path || group.mention && !/^@["']/.test(group.mention)) {
       end = referenceEnd(source, start, end, !group.url);
+      if (group.url) {
+        // Use GFM's boundary only for prose punctuation, not literal * or _ suffixes.
+        const link = markdown.autolinks[firstAt(markdown.autolinks, start)];
+        if (link?.start === start && /^[.,:;!?]+$/.test(source.slice(link.end, end))) end = link.end;
+      }
       const suffix = source.slice(start, end).match(/[*_~]+[.:!?]*$/);
       let marks = markdown.marks;
       // A bare URL ends at Chinese punctuation for translation, even if GFM's

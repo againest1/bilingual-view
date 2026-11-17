@@ -7617,7 +7617,7 @@ function literals(literalAt) {
   };
 }
 function markdownSpans(source, literalAt, formatting = false) {
-  const out = { literals: [], marks: [], tables: [], blocks: [] };
+  const out = { literals: [], autolinks: [], marks: [], tables: [], blocks: [] };
   const extensions = [gfmSyntax, literals(literalAt)];
   if (formatting) extensions.push({ disable: { null: ["protocolAutolink"] } });
   const events = postprocess(parse({ extensions }).document().write(preprocess()(source, void 0, true)));
@@ -7654,6 +7654,8 @@ function markdownSpans(source, literalAt, formatting = false) {
     if (protectedTypes.has(token.type)) {
       out.literals.push({ start, end });
       protectedEnd = end;
+    } else if (token.type === "literalAutolinkHttp") {
+      out.autolinks.push({ start, end });
     } else if (emphasisTypes.has(token.type)) {
       if (token.type === "strong" && parent?.token.type === "paragraph" && parent.token.start.offset === start && parent.token.end.offset === end) {
         out.blocks[parent.index].kind = "heading";
