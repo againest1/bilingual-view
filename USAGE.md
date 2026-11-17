@@ -42,7 +42,9 @@ claude plugin install bilingual-view@bilingual-view
 
 ### 填写翻译服务
 
-点击输入框上方的 **Settings（设置）**，或运行 `/bilingual-view settings`。依次填写服务地址、密钥和翻译模型，输入后按 **Enter** 保存；从列表选择会立即生效：
+点击输入框上方的 **Settings（设置）**，或运行 `/bilingual-view settings`。在终端中，按 **Tab** 移到下一项，按 **Shift+Tab** 返回上一项，按 **Esc** 回到对话。
+
+依次填写服务地址、密钥和翻译模型，输入后按 **Enter** 保存；从列表选择会立即生效：
 
 | 设置项 | 填写说明 |
 | --- | --- |

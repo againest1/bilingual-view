@@ -735,7 +735,9 @@ export const register: Register = (on, configuredOptions) => {
         ] : []),
         ...(!config.enabled ? [Text({ children: 'Input is sent unchanged; messages show their original text.' })] : []),
         ...(hint ? [Text({ children: hint })] : []),
-        Text({ dimColor: true, children: 'Press Enter to save settings or search; selections save immediately.' }),
+        Text({ dimColor: true, children: e.surface === 'terminal'
+          ? 'Tab/Shift+Tab to move. Enter to save or search. Choices autosave.'
+          : 'Press Enter to save settings or search; selections save immediately.' }),
       ] }),
       Box({ flexDirection: 'column', children: [
         Text({ bold: true, children: '1 · Translation service' }),
