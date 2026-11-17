@@ -693,7 +693,8 @@ export const register: Register = (on, configuredOptions) => {
         children: Text({ color, children: `[${props.label}]` }),
       }),
     });
-    return Box({ flexDirection: 'column', children: [Box({ flexDirection: 'row', flexWrap: 'wrap', gap: 2, children: [
+    return Box({ flexDirection: 'column', children: [Box({ flexDirection: 'row', flexWrap: 'wrap',
+      columnGap: 2, rowGap: e.surface === 'terminal' ? 0 : 2, children: [
       Text({ dimColor: true, children: 'Bilingual View' }),
       control({ key: 'bv-toggle', label: enabled(options) ? '\u25cf On' : '\u25cb Off',
         onPress: () => saveSetting($, options, tests, listing, 'enabled', !enabled(options)) }, enabled(options) ? 'success' : 'warning'),
