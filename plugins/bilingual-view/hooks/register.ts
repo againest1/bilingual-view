@@ -63,6 +63,35 @@ async function humanOrigin($: EngineInterface, kind: string): Promise<boolean> {
   return false;
 }
 
+async function translateInput($: EngineInterface, state: State, options: PluginOptions, original: string,
+  signal?: AbortSignal): Promise<{ translated: string; translationMs: number } | undefined> {
+  const prepared = prepareTranslation(original, 'en');
+  if (!prepared) return;
+  const view = state.view;
+  const input = { visible: false };
+  view.inputTranslations.add(input);
+  const clearStatus = () => {
+    if (view.inputTranslations.delete(input) && input.visible && state.view === view) $.ui.invalidate('ui.render');
+  };
+  try {
+    signal?.addEventListener('abort', clearStatus, { once: true });
+    // Show progress above the composer only while a slow input translation is pending.
+    $.clock.after(300, () => {
+      if (state.view !== view || !view.inputTranslations.has(input)) return;
+      input.visible = true;
+      $.ui.invalidate('ui.render');
+    });
+    const started = await $.clock.now();
+    const translated = await translate(hostIO($), options, original, 'en', signal, undefined, prepared);
+    const translationMs = Math.max(0, await $.clock.now() - started);
+    aborted(signal);
+    return { translated, translationMs };
+  } finally {
+    signal?.removeEventListener('abort', clearStatus);
+    clearStatus();
+  }
+}
+
 function switchView(state: State, session: string, path?: string): void {
   state.session = session;
   state.view = newView(session, path);
@@ -76,6 +105,7 @@ function switchView(state: State, session: string, path?: string): void {
 
 // The host accepts at most 64 Select options. Reserve one for the current model.
 const MODEL_PAGE_SIZE = 63;
+const SEND_TRANSLATION_OFF_HINT = 'Input is sent without translation. Chinese display stays on.';
 type ModelListing = { version: number; models: string[]; loading: boolean; error: string; query: string; page: number };
 type ProviderTest = { running: boolean; result: string };
 type ProviderTests = { version: number; connection: ProviderTest; speed: ProviderTest };
@@ -392,37 +422,13 @@ export const register: Register = (on, configuredOptions) => {
     // source=display record for English would suppress later Chinese backfill.
     if (!enabled(options) || !translateBeforeSend(options) || e.command) return next(e);
     if (!await humanOrigin($, e.origin.kind) || /^\s*[!/]/.test(e.text)) return next(e);
-    const prepared = prepareTranslation(e.text, 'en');
-    if (!prepared) return next(e);
-    const view = state.view;
-    const input = { visible: false };
-    view.inputTranslations.add(input);
-    const clearStatus = () => {
-      if (view.inputTranslations.delete(input) && input.visible && state.view === view) $.ui.invalidate('ui.render');
-    };
-    let translated: string, translationMs: number;
-    try {
-      next.signal?.addEventListener('abort', clearStatus, { once: true });
-      // Input has no message UUID until submission; show progress above the
-      // composer, and avoid flashing a status for fast translations.
-      $.clock.after(300, () => {
-        if (state.view !== view || !view.inputTranslations.has(input)) return;
-        input.visible = true;
-        $.ui.invalidate('ui.render');
-      });
-      const started = await $.clock.now();
-      translated = await translate(hostIO($), options, e.text, 'en', next.signal, undefined, prepared);
-      translationMs = Math.max(0, await $.clock.now() - started);
-    }
+    let input;
+    try { input = await translateInput($, state, options, e.text, next.signal); }
     catch (error) { return { drop: inputFailure(error) }; }
-    finally {
-      next.signal?.removeEventListener('abort', clearStatus);
-      clearStatus();
-    }
-    aborted(next.signal);
-    const pending = { original: e.text, translated, session: state.session, translationMs };
+    if (!input) return next(e);
+    const pending = { original: e.text, session: state.session, ...input };
     state.pending.push(pending);
-    const result = await next({ ...e, text: translated });
+    const result = await next({ ...e, text: input.translated });
     if (result.drop) state.pending = state.pending.filter(item => item !== pending);
     return result;
   }).catch(async ($, e, next) => {
@@ -683,7 +689,7 @@ export const register: Register = (on, configuredOptions) => {
     const model = String(options.model || await $.env.get('BILINGUAL_VIEW_MODEL') || '').trim();
     const baseUrl = String(options.base_url || await $.env.get('BILINGUAL_VIEW_BASE_URL') || '');
     const hint = enabled(options) ? [
-      !translateBeforeSend(options) && 'Input is sent unchanged; Chinese display stays on.', setupHint(baseUrl, model),
+      !translateBeforeSend(options) && SEND_TRANSLATION_OFF_HINT, setupHint(baseUrl, model),
     ].filter(Boolean).join(' ') : 'Translation off: input is sent unchanged.';
     const effort = reasoningEffort(options.effort);
     const { Box, Text, Button } = $.ui.resolve(e);
@@ -731,7 +737,7 @@ export const register: Register = (on, configuredOptions) => {
         ...(config.enabled ? [Button({ key: 'bv-setting-send-toggle',
           label: `Translate before send: ${config.translateBeforeSend ? 'On' : 'Off'}`,
           onPress: () => saveSetting($, options, tests, listing, 'translate_before_send', !config.translateBeforeSend) }),
-          ...(!config.translateBeforeSend ? [Text({ children: 'Input is sent unchanged; Chinese display stays on.' })] : []),
+          ...(!config.translateBeforeSend ? [Text({ children: SEND_TRANSLATION_OFF_HINT })] : []),
         ] : []),
         ...(!config.enabled ? [Text({ children: 'Input is sent unchanged; messages show their original text.' })] : []),
         ...(hint ? [Text({ children: hint })] : []),
@@ -870,6 +876,28 @@ export const register: Register = (on, configuredOptions) => {
       await $.ui.toast(`Translation ${config.enabled ? 'On' : 'Off'}; Translate before send: ${config.translateBeforeSend ? 'On' : 'Off'}${config.enabled ? '' : ' (inactive)'}; Provider: ${config.baseUrl || 'Not set'}; Model: ${config.model || 'Not set'}; Effort: ${config.effort === 'default' ? 'Provider default' : config.effort}; API key: ${config.apiKey ? 'Set' : 'Not set'}. Settings: /bilingual-view settings`);
     }
     // Returning command text would add it to model context. Use UI-only toasts.
+    return {};
+  });
+
+  on('command.run', { command: 'btw' }, async ($, e, next) => {
+    if (!enabled(options) || !e.args.trim() || !await humanOrigin($, e.origin.kind)) return next(e);
+    let question = e.args;
+    if (translateBeforeSend(options)) {
+      try {
+        const input = await translateInput($, state, options, question, next.signal);
+        if (input) question = input.translated;
+      } catch (error) {
+        await $.ui.toast(inputFailure(error));
+        return {};
+      }
+    }
+    // The native panel owns the reply and its history. It exposes neither as a message to render.
+    const format = 'Answer in English, followed by a faithful Simplified Chinese translation of the same answer. '
+      + 'Label both sections and preserve code, paths, and identifiers.';
+    return next({ ...e, args: question + '\n\n' + format });
+  }).catch(async ($, e, next) => {
+    if (next.called || !enabled(options) || !translateBeforeSend(options)) return next(e);
+    await $.ui.toast(inputFailure(undefined));
     return {};
   });
 };
