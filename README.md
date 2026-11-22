@@ -70,9 +70,9 @@ claude plugin install bilingual-view@bilingual-view
 
 1. 在 Claude Code 会话中运行 `/plugin`，打开插件管理器。
 2. 切换到 **Marketplaces** 页面，选择 **bilingual-view**。
-3. 选择 **Enable auto-update（启用自动更新）**。
+3. 选择 **Turn on auto-update（启用自动更新）**。
 
-收到更新提示后，启动新会话，或在已打开的终端会话中运行 `/reload-plugins`，即可使用新版。手动更新方式见[更新与卸载](USAGE.md#更新与卸载)。
+收到更新提示后，启动新会话，或在已打开的终端会话中运行 `/reload-plugins`，即可使用新版。
 
 ### 3 · 配置翻译服务
 
@@ -111,6 +111,7 @@ API key 由 Claude 保存；输入时可见，保存后只显示是否已设置�
 | 调整翻译模型的思考强度 | 在 **Settings** 中选择 **Effort**，详见[档位说明](USAGE.md#设置思考强度)。 |
 | 检查设置与连接 | `/bilingual-view status` 查看设置；`/bilingual-view check` 发送示例翻译请求。 |
 | 查看长文本翻译用时 | 运行 `/bilingual-view speed`，按[长文测速建议](USAGE.md#测试翻译速度)优先选择 15 秒内返回的组合。 |
+| [更新 Marketplace 安装的插件](USAGE.md#marketplace-方式) | 点击设置栏的 **Update now（立即更新）**，或运行 `/bilingual-view update`。 |
 
 **只关闭「译好再发送」时，英文用户消息仍可在浏览时补译为中文。** 关闭翻译总开关后，输入按原样提交，消息也显示原文。重新开启不会改写已经发送给 Claude 的内容。
 

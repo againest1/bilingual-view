@@ -376,16 +376,18 @@ cp -R plugins/bilingual-view/.claude-plugin plugins/bilingual-view/hooks "$HOME/
 
 ### Marketplace 方式
 
-更新市场目录并更新插件：
+点击设置栏中 **Settings** 右侧的 **Update now（立即更新）**，或运行 `/bilingual-view update`。看到 **Already up to date** 表示已是最新版。安装新版后，在当前终端会话运行 `/reload-plugins` 即可使用，也可以下次启动时生效。
+
+通过本项目的 Git 市场安装后，如果市场自动更新已关闭，插件会在打开会话时检查一次新版，之后每隔 5～10 分钟检查一次。看到 **↑ Update available（有可用更新）** 时，点击即可安装。如果已在 Claude Code 中禁用非必要后台联网，可用 **Update now** 按需检查并更新。更新失败时，按提示检查市场来源或网络，再点击 **Retry update（重试更新）**。
+
+如需交给 Claude Code 自动更新，在 `/plugin` 的 **Marketplaces** 页面选择 **bilingual-view**，再选择 **Turn on auto-update（启用自动更新）**。启用后由 Claude Code 检查并提示更新，设置栏仍可手动更新。
+
+也可以在系统终端更新：
 
 ```sh
 claude plugin marketplace update bilingual-view
 claude plugin update bilingual-view@bilingual-view
 ```
-
-更新后启动新会话，或在已打开的终端会话中运行 `/reload-plugins`。
-
-如需自动更新，在 `/plugin` 的 **Marketplaces** 页面选择 **bilingual-view**，再启用 **Enable auto-update**；第三方市场默认不自动更新。
 
 卸载插件：
 
@@ -430,6 +432,7 @@ rm -rf "$HOME/.claude/bilingual-view/cache/"
 | `/bilingual-view off` | 关闭翻译。 |
 | `/bilingual-view check` | 发送简短示例翻译请求并报告结果。 |
 | `/bilingual-view speed` | 测试长文本翻译速度，并报告用时或失败原因。 |
+| `/bilingual-view update` | 更新当前通过 Marketplace 安装的 Bilingual View。 |
 | `/bilingual-view diagnostics` | 导出用于问题反馈的近期诊断信息到本机，不自动上传。 |
 
 上表中的命令用于控制本 Mod。内置命令和其他命令的翻译行为见[输入翻译范围](#输入翻译范围)。

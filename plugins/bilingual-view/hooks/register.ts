@@ -14,6 +14,7 @@ import { providerConfig, reasoningEffort, REASONING_EFFORTS } from './provider';
 import { questionId, answerId, questionSource, drawQuestions, drawQuestionResult, translateAnswers } from './questions';
 import type { Question, QuestionResult } from './questions.ts';
 import { diagnosticStatus, DIAGNOSTIC_FILE } from './diagnostics';
+import { PluginUpdates } from './updates';
 
 // Keep every Claude API call visible in this entry module. The domain modules
 // receive callbacks, never `$` or a host namespace, and need no extra process.
@@ -239,6 +240,35 @@ async function loadModels($: EngineInterface, options: PluginOptions, listing: M
     }
   }
 }
+async function claudeExecutable($: EngineInterface): Promise<string> {
+  const home = await $.env.get('HOME') || await $.env.get('USERPROFILE');
+  if (home) {
+    for (const name of ['claude', 'claude.exe']) {
+      const path = home.replace(/[\\/]+$/, '') + '/.local/bin/' + name;
+      if (await $.fs.exists(path)) return path;
+    }
+  }
+  return 'claude';
+}
+
+function pluginUpdates($: EngineInterface): PluginUpdates {
+  return new PluginUpdates({
+    root: $.plugin.root, cwd: () => $.session.cwd(),
+    configDir: async () => {
+      const directory = await $.env.get('CLAUDE_CONFIG_DIR');
+      if (directory) return directory;
+      const home = await $.env.get('HOME') || await $.env.get('USERPROFILE');
+      return home && home.replace(/[\\/]+$/, '') + '/.claude';
+    },
+    read: path => $.fs.read(path), exists: path => $.fs.exists(path),
+    declaredMarkets: () => $.settings.read({ key: 'extraKnownMarketplaces' }),
+    offline: async () => /^(1|true|yes|on)$/i.test(await $.env.get('CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC') || ''),
+    cli: () => claudeExecutable($), run: (argv, init) => $.process.run(argv, init),
+    after: (ms, run) => $.clock.after(ms, run), invalidate: () => $.ui.invalidate('ui.render'),
+    toast: text => $.ui.toast(text),
+  });
+}
+
 async function saveApiKey($: EngineInterface, value: string): Promise<string | undefined> {
   const key = value.trim();
   if (!key) return;
@@ -250,14 +280,7 @@ async function saveApiKey($: EngineInterface, value: string): Promise<string | u
     const rows = await $.config.list();
     const owner = rows.find(row => row.key === $.plugin.name + '.base_url')?.provider.plugin;
     if (!owner) throw new Error('Plugin configuration is unavailable.');
-    const userHome = await $.env.get('HOME') || await $.env.get('USERPROFILE');
-    let executable = 'claude';
-    if (userHome) {
-      for (const name of ['claude', 'claude.exe']) {
-        const path = userHome.replace(/[\\/]+$/, '') + '/.local/bin/' + name;
-        if (await $.fs.exists(path)) { executable = path; break; }
-      }
-    }
+    const executable = await claudeExecutable($);
     // Sensitive fields have no config.set row. The CLI uses the same host
     // credential storage; stdin keeps the key out of command arguments.
     const result = await $.process.run([executable, 'plugin', 'configure', owner,
@@ -408,6 +431,7 @@ export const register: Register = (on, configuredOptions) => {
   };
   // Ephemeral UI data only. All settings are written through the host's userConfig.
   const listing: ModelListing = { version: 0, models: [], loading: false, error: '', query: '', page: 0 };
+  let updates: PluginUpdates | undefined;
   const tests: ProviderTests = { version: 0,
     connection: { running: false, result: '' }, speed: { running: false, result: '' } };
 
@@ -415,7 +439,7 @@ export const register: Register = (on, configuredOptions) => {
     const session = await $.session.id();
     state.diagnostics.record('session.start', session, '', 'observed', { view: state.view.session });
     if (state.session !== session) switchView(state, session);
-    await $.command.register({ name: 'bilingual-view', description: 'Translate English text, manage translation settings, test your provider and view diagnostics', argumentHint: '[status|settings|on|off|translate [text]|check|speed|diagnostics]', immediate: true });
+    await $.command.register({ name: 'bilingual-view', description: 'Translate text, manage settings, update Bilingual View and view diagnostics', argumentHint: '[status|settings|on|off|translate [text]|check|speed|update|diagnostics]', immediate: true });
     if (!state.pollStarted) {
       state.pollStarted = true;
       $.clock.every(1000, () => enabled(options) ? pollVisible(hostIO($), state, options) : undefined);
@@ -425,9 +449,17 @@ export const register: Register = (on, configuredOptions) => {
   });
 
   on('session.end', async ($, e, next) => {
+    updates?.stop();
+    updates = undefined;
     state.diagnostics.record('session.end', e.sessionId, '', 'observed', { view: state.view.session });
     switchView(state, '');
     return next(e);
+  });
+
+  on('classic.ConfigChange', async ($, e, next) => {
+    const result = await next(e);
+    if (updates) $.clock.after(0, () => updates?.refresh(false));
+    return result;
   });
 
   on('classic.SessionStart', async ($, e, next) => {
@@ -713,6 +745,9 @@ export const register: Register = (on, configuredOptions) => {
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const drawing = await next(e);
     if (e.props.hasSurvey || (e.surface !== 'terminal' && e.surface !== 'desktop')) return drawing;
+    const updater = updates ??= pluginUpdates($);
+    await updater.start();
+    const updateLabel = updater.label;
     const model = String(options.model || await $.env.get('BILINGUAL_VIEW_MODEL') || '').trim();
     const baseUrl = String(options.base_url || await $.env.get('BILINGUAL_VIEW_BASE_URL') || '');
     const hint = enabled(options) ? [
@@ -737,6 +772,8 @@ export const register: Register = (on, configuredOptions) => {
         translateBeforeSend(options) ? 'success' : 'warning')] : []),
       control({ key: 'bv-translate', label: 'Translate', onPress: () => openTranslationPane($, state) }, 'briefLabelYou'),
       control({ key: 'bv-settings', label: 'Settings', onPress: () => openSettings($) }, 'briefLabelYou'),
+      ...(updateLabel ? [control({ key: 'bv-update', label: updateLabel, onPress: () => updater.update() },
+        updater.highlighted ? 'warning' : 'briefLabelYou')] : []),
       ...([...state.view.inputTranslations].some(input => input.visible)
         ? [Text({ color: 'warning', children: 'Translating to English...' })] : []),
       Text({ dimColor: true, children: `${model || 'Not set'} (${effort === 'default' ? 'Provider default' : effort})` }),
@@ -932,6 +969,7 @@ export const register: Register = (on, configuredOptions) => {
     }
     const arg = e.args.trim().toLowerCase();
     if (arg === 'settings') await openSettings($);
+    else if (arg === 'update') await (updates ??= pluginUpdates($)).update();
     else if (arg === 'on' || arg === 'off') await saveSetting($, options, tests, listing, 'enabled', arg === 'on');
     else if (arg === 'check') await checkProvider($, options, tests);
     else if (arg === 'speed') await checkTranslationSpeed($, options, tests);
@@ -942,6 +980,13 @@ export const register: Register = (on, configuredOptions) => {
     }
     // Returning command text would add it to model context.
     return {};
+  });
+
+  on('command.run', { command: 'plugin' }, async ($, e, next) => {
+    // The native manager's own toggle need not emit classic.ConfigChange.
+    const result = await next(e);
+    if (updates) $.clock.after(0, () => updates?.refresh(false));
+    return result;
   });
 
   on('command.run', { command: 'btw' }, async ($, e, next) => {
