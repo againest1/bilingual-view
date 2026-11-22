@@ -410,7 +410,7 @@ export const register: Register = (on, configuredOptions) => {
     const session = await $.session.id();
     state.diagnostics.record('session.start', session, '', 'observed', { view: state.view.session });
     if (state.session !== session) switchView(state, session);
-    await $.command.register({ name: 'bilingual-view', description: 'Translation settings, copied /btw replies, provider tests and diagnostics', argumentHint: '[status|settings|on|off|btw|check|speed|diagnostics]', immediate: true });
+    await $.command.register({ name: 'bilingual-view', description: 'Translate English text, manage translation settings, test your provider and view diagnostics', argumentHint: '[status|settings|on|off|translate|check|speed|diagnostics]', immediate: true });
     if (!state.pollStarted) {
       state.pollStarted = true;
       $.clock.every(1000, () => enabled(options) ? pollVisible(hostIO($), state, options) : undefined);
@@ -834,8 +834,8 @@ export const register: Register = (on, configuredOptions) => {
     if (!enabled(options)) return Text({ children: 'Turn translation on with /bilingual-view on.' });
     const reply = state.view.btwReply;
     if (!reply) return Box({ flexDirection: 'column', children: [
-      Text({ children: 'Paste the /btw answer you copied. Press Enter to translate with your provider.' }),
-      Input({ key: 'bv-btw-answer', label: 'Original answer', rows: 5, autoFocus: true, submitLabel: 'Translate',
+      Text({ children: 'Type or paste English text, then press Enter to translate into Simplified Chinese.' }),
+      Input({ key: 'bv-btw-answer', label: 'English text', rows: 5, autoFocus: true, submitLabel: 'Translate',
         onSubmit: source => translateBtwReply($, state, options, source) }),
     ] });
     return Box({ flexDirection: 'column', gap: 1, children: [
@@ -845,7 +845,7 @@ export const register: Register = (on, configuredOptions) => {
         Button({ key: 'bv-btw-retry', label: 'Retry translation', onPress: () => translateBtwReply($, state, options, reply.source) }),
       ] : []),
       ...(reply.display !== reply.source ? [Text({ bold: true, children: 'Chinese translation' }), Markdown({ text: reply.display })] : []),
-      Text({ bold: true, children: 'Original answer' }), Markdown({ text: reply.source }),
+      Text({ bold: true, children: 'Original text' }), Markdown({ text: reply.source }),
       Button({ key: 'bv-btw-close', label: 'Close', onPress: () => {
         state.view.btwReply = undefined;
         return $.ui.close({ id: BTW_PANE });
@@ -919,9 +919,9 @@ export const register: Register = (on, configuredOptions) => {
   on('command.run', { command: 'bilingual-view' }, async ($, e) => {
     const arg = e.args.trim().toLowerCase();
     if (arg === 'settings') await openSettings($);
-    else if (arg === 'btw') {
+    else if (arg === 'translate' || arg === 'btw') {
       state.view.btwReply = undefined;
-      await $.ui.open({ id: BTW_PANE, title: 'Translate /btw answer', focus: true, closeOnEscape: true, rows: 18, columns: 72 });
+      await $.ui.open({ id: BTW_PANE, title: 'Translate text', focus: true, closeOnEscape: true, rows: 18, columns: 72 });
     } else if (arg === 'on' || arg === 'off') await saveSetting($, options, tests, listing, 'enabled', arg === 'on');
     else if (arg === 'check') await checkProvider($, options, tests);
     else if (arg === 'speed') await checkTranslationSpeed($, options, tests);

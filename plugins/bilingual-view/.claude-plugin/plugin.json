@@ -1,7 +1,7 @@
 {
   "name": "bilingual-view",
   "displayName": "Bilingual View",
-  "description": "Translate Chinese prompts and terminal /btw questions into English. Read messages and question dialogs in Chinese, and translate a copied /btw answer on demand.",
+  "description": "Translate Chinese prompts and terminal /btw questions into English. Read messages and question dialogs in Chinese, or translate English text into Simplified Chinese on demand.",
   "homepage": "https://github.com/againest1/bilingual-view#readme",
   "repository": "https://github.com/againest1/bilingual-view",
   "license": "MIT",
