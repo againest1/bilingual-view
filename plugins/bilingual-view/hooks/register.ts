@@ -919,7 +919,7 @@ export const register: Register = (on, configuredOptions) => {
   on('command.run', { command: 'bilingual-view' }, async ($, e) => {
     const arg = e.args.trim().toLowerCase();
     if (arg === 'settings') await openSettings($);
-    else if (arg === 'translate' || arg === 'btw') {
+    else if (arg === 'translate') {
       state.view.btwReply = undefined;
       await $.ui.open({ id: BTW_PANE, title: 'Translate text', focus: true, closeOnEscape: true, rows: 18, columns: 72 });
     } else if (arg === 'on' || arg === 'off') await saveSetting($, options, tests, listing, 'enabled', arg === 'on');
