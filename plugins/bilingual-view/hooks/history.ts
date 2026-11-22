@@ -1,6 +1,6 @@
 import type { RuntimeIO } from './ports.ts';
 import type { FinalAnswerRef, State, View } from './state.ts';
-import { firstBlockRenderId, outputWorkKey, readRecord, sessionRecordReader } from './storage.ts';
+import { firstBlockRenderId, outputWorkKey, readRecord, sessionRecordReader } from './storage';
 
 export function rememberFinal(view: View, ref: FinalAnswerRef): void {
   view.finals.set(ref.id, ref);

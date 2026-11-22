@@ -1,4 +1,4 @@
-import { markdownSpans } from './markdown.ts';
+import { markdownSpans } from './markdown';
 import type { Literal, MarkdownBlock, MarkdownSpans, Span } from './markdown.ts';
 
 /** Pure text helpers. No Claude or network access. */

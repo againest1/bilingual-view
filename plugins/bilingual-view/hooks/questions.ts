@@ -1,8 +1,8 @@
 import type { PluginOptions } from 'claude-code';
 import type { TranslationIO } from './ports.ts';
 import type { RecordEntry } from './state.ts';
-import { prepareTranslation } from './text.ts';
-import { translate } from './translation.ts';
+import { prepareTranslation } from './text';
+import { translate } from './translation';
 
 export type Question = {
   question: string; header?: string; description?: string; placeholder?: string;

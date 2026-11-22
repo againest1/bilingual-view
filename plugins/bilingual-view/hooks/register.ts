@@ -1,19 +1,19 @@
 import type { ButtonProps, EngineInterface, Register, PluginOptions, RenderElement, RenderInput } from 'claude-code';
 import type { RuntimeIO } from './ports.ts';
 import type { Block, DisplayMessageRef, FinalAnswerRef, State, RecordEntry } from './state.ts';
-import { newState, newView } from './state.ts';
-import { MemoryCache } from './memory.ts';
-import { finalBlocks, prepareTranslation, needsDisplayTranslation, textBlocks, translatedChineseDisplay } from './text.ts';
-import { aborted, inputFailure, requestTranslation, translate } from './translation.ts';
-import { TRANSLATION_SPEED_SAMPLE } from './speed-sample.ts';
-import { firstBlockRenderId, memoryKey, outputWorkKey, readRecord, saveRecord, sessionRecordReader, userOriginalFor } from './storage.ts';
-import { ensureTranslation, displayRecord, pollVisible, ready } from './tasks.ts';
-import { referenceFor, refreshHistory, rememberFinal } from './history.ts';
-import { effectiveSettings, enabled, translateBeforeSend, fetchModels, SETTINGS_PANE } from './settings.ts';
-import { providerConfig, reasoningEffort, REASONING_EFFORTS } from './provider.ts';
-import { questionId, answerId, questionSource, drawQuestions, drawQuestionResult, translateAnswers } from './questions.ts';
+import { newState, newView } from './state';
+import { MemoryCache } from './memory';
+import { finalBlocks, prepareTranslation, needsDisplayTranslation, textBlocks, translatedChineseDisplay } from './text';
+import { aborted, inputFailure, requestTranslation, translate } from './translation';
+import { TRANSLATION_SPEED_SAMPLE } from './speed-sample';
+import { firstBlockRenderId, memoryKey, outputWorkKey, readRecord, saveRecord, sessionRecordReader, userOriginalFor } from './storage';
+import { ensureTranslation, displayRecord, pollVisible, ready } from './tasks';
+import { referenceFor, refreshHistory, rememberFinal } from './history';
+import { effectiveSettings, enabled, translateBeforeSend, fetchModels, SETTINGS_PANE } from './settings';
+import { providerConfig, reasoningEffort, REASONING_EFFORTS } from './provider';
+import { questionId, answerId, questionSource, drawQuestions, drawQuestionResult, translateAnswers } from './questions';
 import type { Question, QuestionResult } from './questions.ts';
-import { diagnosticStatus, DIAGNOSTIC_FILE } from './diagnostics.ts';
+import { diagnosticStatus, DIAGNOSTIC_FILE } from './diagnostics';
 
 // Keep every Claude API call visible in this entry module. The domain modules
 // receive callbacks, never `$` or a host namespace, and need no extra process.
@@ -106,6 +106,7 @@ function switchView(state: State, session: string, path?: string): void {
 // The host accepts at most 64 Select options. Reserve one for the current model.
 const MODEL_PAGE_SIZE = 63;
 const SEND_TRANSLATION_OFF_HINT = 'Input is sent without translation. Chinese display stays on.';
+const BTW_PANE = 'bilingual-view-btw';
 type ModelListing = { version: number; models: string[]; loading: boolean; error: string; query: string; page: number };
 type ProviderTest = { running: boolean; result: string };
 type ProviderTests = { version: number; connection: ProviderTest; speed: ProviderTest };
@@ -191,6 +192,27 @@ async function saveSetting($: EngineInterface, options: Record<string, PluginOpt
 async function openSettings($: EngineInterface) {
   await $.ui.open({ id: SETTINGS_PANE, title: 'Bilingual View settings', focus: true, closeOnEscape: true, rows: 29, columns: 64 });
 }
+
+async function translateBtwReply($: EngineInterface, state: State, options: PluginOptions, source: string) {
+  const view = state.view;
+  if (!enabled(options) || !source.trim() || view.btwReply?.status === 'pending') return;
+  const reply: Block = { source, display: source, status: 'pending' };
+  view.btwReply = reply;
+  $.ui.invalidate('ui.render');
+  try {
+    if (needsDisplayTranslation(source)) {
+      const translated = await translate(hostIO($), options, source, 'zh');
+      if (translated !== source) reply.display = translatedChineseDisplay(translated);
+    }
+    reply.status = 'ready';
+  } catch (error) {
+    reply.status = 'error';
+    reply.error = error instanceof Error ? error.message : 'Translation failed. Please retry.';
+  } finally {
+    if (state.view === view && view.btwReply === reply) $.ui.invalidate('ui.render');
+  }
+}
+
 async function loadModels($: EngineInterface, options: PluginOptions, listing: ModelListing) {
   if (listing.loading) return;
   const { version } = listing;
@@ -388,7 +410,7 @@ export const register: Register = (on, configuredOptions) => {
     const session = await $.session.id();
     state.diagnostics.record('session.start', session, '', 'observed', { view: state.view.session });
     if (state.session !== session) switchView(state, session);
-    await $.command.register({ name: 'bilingual-view', description: 'Translation settings, connection and speed tests, and diagnostic snapshot', argumentHint: '[status|settings|on|off|check|speed|diagnostics]', immediate: true });
+    await $.command.register({ name: 'bilingual-view', description: 'Translation settings, copied /btw replies, provider tests and diagnostics', argumentHint: '[status|settings|on|off|btw|check|speed|diagnostics]', immediate: true });
     if (!state.pollStarted) {
       state.pollStarted = true;
       $.clock.every(1000, () => enabled(options) ? pollVisible(hostIO($), state, options) : undefined);
@@ -806,6 +828,36 @@ export const register: Register = (on, configuredOptions) => {
     ] });
   });
 
+  on('ui.render', { component: 'Pane', requestId: BTW_PANE }, ($, e, next) => {
+    if (e.surface !== 'terminal' && e.surface !== 'desktop') return next(e);
+    const { Box, Button, Input, Markdown, Text } = $.ui.resolve(e);
+    if (!enabled(options)) return Text({ children: 'Turn translation on with /bilingual-view on.' });
+    const reply = state.view.btwReply;
+    if (!reply) return Box({ flexDirection: 'column', children: [
+      Text({ children: 'Paste the /btw answer you copied. Press Enter to translate with your provider.' }),
+      Input({ key: 'bv-btw-answer', label: 'Original answer', rows: 5, autoFocus: true, submitLabel: 'Translate',
+        onSubmit: source => translateBtwReply($, state, options, source) }),
+    ] });
+    return Box({ flexDirection: 'column', gap: 1, children: [
+      ...(reply.status === 'pending' ? [Text({ children: 'Translating...' })] : []),
+      ...(reply.status === 'error' ? [
+        Text({ children: reply.error }),
+        Button({ key: 'bv-btw-retry', label: 'Retry translation', onPress: () => translateBtwReply($, state, options, reply.source) }),
+      ] : []),
+      ...(reply.display !== reply.source ? [Text({ bold: true, children: 'Chinese translation' }), Markdown({ text: reply.display })] : []),
+      Text({ bold: true, children: 'Original answer' }), Markdown({ text: reply.source }),
+      Button({ key: 'bv-btw-close', label: 'Close', onPress: () => {
+        state.view.btwReply = undefined;
+        return $.ui.close({ id: BTW_PANE });
+      } }),
+    ] });
+  });
+
+  on('ui.close', { id: BTW_PANE }, (_, e, next) => {
+    state.view.btwReply = undefined;
+    return next(e);
+  });
+
   on('ui.render', { component: 'AskUserQuestion' }, async ($, e, next) => {
     if (!enabled(options) || (e.surface !== 'terminal' && e.surface !== 'desktop')) return next(e);
     const view = state.view;
@@ -867,7 +919,10 @@ export const register: Register = (on, configuredOptions) => {
   on('command.run', { command: 'bilingual-view' }, async ($, e) => {
     const arg = e.args.trim().toLowerCase();
     if (arg === 'settings') await openSettings($);
-    else if (arg === 'on' || arg === 'off') await saveSetting($, options, tests, listing, 'enabled', arg === 'on');
+    else if (arg === 'btw') {
+      state.view.btwReply = undefined;
+      await $.ui.open({ id: BTW_PANE, title: 'Translate /btw answer', focus: true, closeOnEscape: true, rows: 18, columns: 72 });
+    } else if (arg === 'on' || arg === 'off') await saveSetting($, options, tests, listing, 'enabled', arg === 'on');
     else if (arg === 'check') await checkProvider($, options, tests);
     else if (arg === 'speed') await checkTranslationSpeed($, options, tests);
     else if (arg === 'diagnostics') await exportDiagnostics($, state);
@@ -880,21 +935,16 @@ export const register: Register = (on, configuredOptions) => {
   });
 
   on('command.run', { command: 'btw' }, async ($, e, next) => {
-    if (!enabled(options) || !e.args.trim() || !await humanOrigin($, e.origin.kind)) return next(e);
-    let question = e.args;
-    if (translateBeforeSend(options)) {
-      try {
-        const input = await translateInput($, state, options, question, next.signal);
-        if (input) question = input.translated;
-      } catch (error) {
-        await $.ui.toast(inputFailure(error));
-        return {};
-      }
+    if (!enabled(options) || !translateBeforeSend(options) || !e.args.trim()
+      || !await humanOrigin($, e.origin.kind)) return next(e);
+    let input;
+    try {
+      input = await translateInput($, state, options, e.args, next.signal);
+    } catch (error) {
+      await $.ui.toast(inputFailure(error));
+      return {};
     }
-    // The native panel owns the reply and its history. It exposes neither as a message to render.
-    const format = 'Answer in English, followed by a faithful Simplified Chinese translation of the same answer. '
-      + 'Label both sections and preserve code, paths, and identifiers.';
-    return next({ ...e, args: question + '\n\n' + format });
+    return next(input ? { ...e, args: input.translated } : e);
   }).catch(async ($, e, next) => {
     if (next.called || !enabled(options) || !translateBeforeSend(options)) return next(e);
     await $.ui.toast(inputFailure(undefined));

@@ -1,6 +1,6 @@
 import type { StorageIO } from './ports.ts';
 import type { RecordEntry, State, View } from './state.ts';
-import { diagnosticStatus } from './diagnostics.ts';
+import { diagnosticStatus } from './diagnostics';
 
 const PREFIX = 'bilingual-view.v1.';
 const OUTPUT_PREFIX = 'output:';

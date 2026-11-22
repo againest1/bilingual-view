@@ -1,10 +1,10 @@
 import type { PluginOptions } from 'claude-code';
 import type { TranslationIO } from './ports.ts';
-import { LiteralIntegrityError, prepareTranslation, restoreText, splitText } from './text.ts';
+import { LiteralIntegrityError, prepareTranslation, restoreText, splitText } from './text';
 import type { ProtectedText } from './text.ts';
-import { parseTranslation, providerConfig, translationRequest } from './provider.ts';
+import { parseTranslation, providerConfig, translationRequest } from './provider';
 import type { ProviderConfig, TranslationCorrection } from './provider.ts';
-import { effectiveSettings } from './settings.ts';
+import { effectiveSettings } from './settings';
 
 /** Validated chunks retained only in memory for a display translation's retry. */
 export type TranslationProgress = {

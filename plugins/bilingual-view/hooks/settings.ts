@@ -1,6 +1,6 @@
 import type { PluginOptions } from 'claude-code';
 import type { TranslationIO } from './ports.ts';
-import { providerConfig, reasoningEffort } from './provider.ts';
+import { providerConfig, reasoningEffort } from './provider';
 
 export const SETTINGS_PANE = 'bilingual-view-settings';
 export const enabled = (options: PluginOptions): boolean => options.enabled !== false;

@@ -1,8 +1,8 @@
 import type { TextRow } from './text.ts';
 import type { PluginOptions } from 'claude-code';
 import type { RuntimeIO } from './ports.ts';
-import { MemoryCache, DISPLAY_CACHE_MAX_ENTRIES, DISPLAY_CACHE_MAX_BYTES } from './memory.ts';
-import { Diagnostics } from './diagnostics.ts';
+import { MemoryCache, DISPLAY_CACHE_MAX_ENTRIES, DISPLAY_CACHE_MAX_BYTES } from './memory';
+import { Diagnostics } from './diagnostics';
 import type { TranslationProgress } from './translation.ts';
 
 export type Block = {
@@ -33,6 +33,7 @@ export type DisplayTask = {
 export type View = {
   session: string; path?: string; historyStamp?: string; loadingHistory: boolean;
   dialog?: string;
+  btwReply?: Block;
   inputTranslations: Set<{ visible: boolean }>;
   finals: Map<string, FinalAnswerRef>;
   userOriginalIds: Map<string, string>;

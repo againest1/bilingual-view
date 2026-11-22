@@ -1,12 +1,12 @@
 import type { PluginOptions } from 'claude-code';
 import type { RuntimeIO } from './ports.ts';
 import type { DisplayMessageRef, DisplayTask, MessageIdentity, SessionMessageRef, RecordEntry, State } from './state.ts';
-import { translate } from './translation.ts';
-import { memoryKey, outputWorkKey, readRecord, saveRecord, sessionRecordReader } from './storage.ts';
+import { translate } from './translation';
+import { memoryKey, outputWorkKey, readRecord, saveRecord, sessionRecordReader } from './storage';
 import type { RecordReader } from './storage.ts';
-import { referenceFor, refreshHistory } from './history.ts';
-import { needsDisplayTranslation, needsTranslation } from './text.ts';
-import { diagnosticStatus } from './diagnostics.ts';
+import { referenceFor, refreshHistory } from './history';
+import { needsDisplayTranslation, needsTranslation } from './text';
+import { diagnosticStatus } from './diagnostics';
 
 /** Shared user/assistant display queue, including the one currently running. */
 export const MAX_OUTPUT_TASKS = 32;
