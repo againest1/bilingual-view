@@ -106,7 +106,7 @@ function switchView(state: State, session: string, path?: string): void {
 // The host accepts at most 64 Select options. Reserve one for the current model.
 const MODEL_PAGE_SIZE = 63;
 const SEND_TRANSLATION_OFF_HINT = 'Input is sent without translation. Chinese display stays on.';
-const BTW_PANE = 'bilingual-view-btw';
+const TRANSLATE_PANE = 'bilingual-view-btw';
 type ModelListing = { version: number; models: string[]; loading: boolean; error: string; query: string; page: number };
 type ProviderTest = { running: boolean; result: string };
 type ProviderTests = { version: number; connection: ProviderTest; speed: ProviderTest };
@@ -193,11 +193,16 @@ async function openSettings($: EngineInterface) {
   await $.ui.open({ id: SETTINGS_PANE, title: 'Bilingual View settings', focus: true, closeOnEscape: true, rows: 29, columns: 64 });
 }
 
-async function translateBtwReply($: EngineInterface, state: State, options: PluginOptions, source: string) {
+async function openTranslationPane($: EngineInterface, state: State) {
+  state.view.textTranslation = undefined;
+  await $.ui.open({ id: TRANSLATE_PANE, title: 'Translate text', focus: true, closeOnEscape: true, rows: 18, columns: 72 });
+}
+
+async function translatePaneText($: EngineInterface, state: State, options: PluginOptions, source: string) {
   const view = state.view;
-  if (!enabled(options) || !source.trim() || view.btwReply?.status === 'pending') return;
+  if (!enabled(options) || !source.trim() || view.textTranslation?.status === 'pending') return;
   const reply: Block = { source, display: source, status: 'pending' };
-  view.btwReply = reply;
+  view.textTranslation = reply;
   $.ui.invalidate('ui.render');
   try {
     if (needsDisplayTranslation(source)) {
@@ -209,7 +214,7 @@ async function translateBtwReply($: EngineInterface, state: State, options: Plug
     reply.status = 'error';
     reply.error = error instanceof Error ? error.message : 'Translation failed. Please retry.';
   } finally {
-    if (state.view === view && view.btwReply === reply) $.ui.invalidate('ui.render');
+    if (state.view === view && view.textTranslation === reply) $.ui.invalidate('ui.render');
   }
 }
 
@@ -410,7 +415,7 @@ export const register: Register = (on, configuredOptions) => {
     const session = await $.session.id();
     state.diagnostics.record('session.start', session, '', 'observed', { view: state.view.session });
     if (state.session !== session) switchView(state, session);
-    await $.command.register({ name: 'bilingual-view', description: 'Translate English text, manage translation settings, test your provider and view diagnostics', argumentHint: '[status|settings|on|off|translate|check|speed|diagnostics]', immediate: true });
+    await $.command.register({ name: 'bilingual-view', description: 'Translate English text, manage translation settings, test your provider and view diagnostics', argumentHint: '[status|settings|on|off|translate [text]|check|speed|diagnostics]', immediate: true });
     if (!state.pollStarted) {
       state.pollStarted = true;
       $.clock.every(1000, () => enabled(options) ? pollVisible(hostIO($), state, options) : undefined);
@@ -730,6 +735,7 @@ export const register: Register = (on, configuredOptions) => {
         label: `Translate before send: ${translateBeforeSend(options) ? 'On' : 'Off'}`,
         onPress: () => saveSetting($, options, tests, listing, 'translate_before_send', !translateBeforeSend(options)) },
         translateBeforeSend(options) ? 'success' : 'warning')] : []),
+      control({ key: 'bv-translate', label: 'Translate', onPress: () => openTranslationPane($, state) }, 'briefLabelYou'),
       control({ key: 'bv-settings', label: 'Settings', onPress: () => openSettings($) }, 'briefLabelYou'),
       ...([...state.view.inputTranslations].some(input => input.visible)
         ? [Text({ color: 'warning', children: 'Translating to English...' })] : []),
@@ -828,33 +834,33 @@ export const register: Register = (on, configuredOptions) => {
     ] });
   });
 
-  on('ui.render', { component: 'Pane', requestId: BTW_PANE }, ($, e, next) => {
+  on('ui.render', { component: 'Pane', requestId: TRANSLATE_PANE }, ($, e, next) => {
     if (e.surface !== 'terminal' && e.surface !== 'desktop') return next(e);
     const { Box, Button, Input, Markdown, Text } = $.ui.resolve(e);
     if (!enabled(options)) return Text({ children: 'Turn translation on with /bilingual-view on.' });
-    const reply = state.view.btwReply;
+    const reply = state.view.textTranslation;
     if (!reply) return Box({ flexDirection: 'column', children: [
       Text({ children: 'Type or paste English text, then press Enter to translate into Simplified Chinese.' }),
       Input({ key: 'bv-btw-answer', label: 'English text', rows: 5, autoFocus: true, submitLabel: 'Translate',
-        onSubmit: source => translateBtwReply($, state, options, source) }),
+        onSubmit: source => translatePaneText($, state, options, source) }),
     ] });
     return Box({ flexDirection: 'column', gap: 1, children: [
       ...(reply.status === 'pending' ? [Text({ children: 'Translating...' })] : []),
       ...(reply.status === 'error' ? [
         Text({ children: reply.error }),
-        Button({ key: 'bv-btw-retry', label: 'Retry translation', onPress: () => translateBtwReply($, state, options, reply.source) }),
+        Button({ key: 'bv-btw-retry', label: 'Retry translation', onPress: () => translatePaneText($, state, options, reply.source) }),
       ] : []),
       ...(reply.display !== reply.source ? [Text({ bold: true, children: 'Chinese translation' }), Markdown({ text: reply.display })] : []),
       Text({ bold: true, children: 'Original text' }), Markdown({ text: reply.source }),
       Button({ key: 'bv-btw-close', label: 'Close', onPress: () => {
-        state.view.btwReply = undefined;
-        return $.ui.close({ id: BTW_PANE });
+        state.view.textTranslation = undefined;
+        return $.ui.close({ id: TRANSLATE_PANE });
       } }),
     ] });
   });
 
-  on('ui.close', { id: BTW_PANE }, (_, e, next) => {
-    state.view.btwReply = undefined;
+  on('ui.close', { id: TRANSLATE_PANE }, (_, e, next) => {
+    state.view.textTranslation = undefined;
     return next(e);
   });
 
@@ -917,12 +923,16 @@ export const register: Register = (on, configuredOptions) => {
   });
 
   on('command.run', { command: 'bilingual-view' }, async ($, e) => {
+    // Consume only the command separator so Markdown indentation and line breaks survive.
+    const textCommand = /^\s*translate(?:\s(.*))?$/is.exec(e.args);
+    if (textCommand) {
+      await openTranslationPane($, state);
+      if (textCommand[1]) await translatePaneText($, state, options, textCommand[1]);
+      return {};
+    }
     const arg = e.args.trim().toLowerCase();
     if (arg === 'settings') await openSettings($);
-    else if (arg === 'translate') {
-      state.view.btwReply = undefined;
-      await $.ui.open({ id: BTW_PANE, title: 'Translate text', focus: true, closeOnEscape: true, rows: 18, columns: 72 });
-    } else if (arg === 'on' || arg === 'off') await saveSetting($, options, tests, listing, 'enabled', arg === 'on');
+    else if (arg === 'on' || arg === 'off') await saveSetting($, options, tests, listing, 'enabled', arg === 'on');
     else if (arg === 'check') await checkProvider($, options, tests);
     else if (arg === 'speed') await checkTranslationSpeed($, options, tests);
     else if (arg === 'diagnostics') await exportDiagnostics($, state);
@@ -930,7 +940,7 @@ export const register: Register = (on, configuredOptions) => {
       const config = await effectiveSettings(hostIO($), options);
       await $.ui.toast(`Translation ${config.enabled ? 'On' : 'Off'}; Translate before send: ${config.translateBeforeSend ? 'On' : 'Off'}${config.enabled ? '' : ' (inactive)'}; Provider: ${config.baseUrl || 'Not set'}; Model: ${config.model || 'Not set'}; Effort: ${config.effort === 'default' ? 'Provider default' : config.effort}; API key: ${config.apiKey ? 'Set' : 'Not set'}. Settings: /bilingual-view settings`);
     }
-    // Returning command text would add it to model context. Use UI-only toasts.
+    // Returning command text would add it to model context.
     return {};
   });
 

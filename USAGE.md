@@ -34,7 +34,7 @@ claude plugin marketplace add againest1/bilingual-view
 claude plugin install bilingual-view@bilingual-view
 ```
 
-安装后启动新的 Claude Code 会话；已打开的终端会话也可以运行 `/reload-plugins`。输入框上方出现 **Bilingual View** 设置栏后，即可继续配置。设置栏中有翻译总开关 **On/Off（开启/关闭）**、**Translate before send（译好再发送）** 和 **Settings（设置）**。
+安装后启动新的 Claude Code 会话，或在已打开的终端会话中运行 `/reload-plugins`。输入框上方出现 **Bilingual View** 设置栏后，即可[配置翻译服务](#填写翻译服务)。
 
 不通过 Marketplace 安装时，可按[手动安装](#手动安装)操作，再回到下一节配置。
 
@@ -131,7 +131,9 @@ Claude 给出符合[中文显示范围](#中文显示范围)的英文最终回�
 
 ### 单独翻译英文文本
 
-开启翻译总开关后，运行 `/bilingual-view translate`。在 **English text（英文文本）** 中直接输入或粘贴一段英文，按 **Enter** 即可对照原文和简体中文译文。关闭「译好再发送」时也可以使用。
+开启翻译总开关后，在 Claude Code 输入框中输入 `/bilingual-view translate The backup is ready.` 并按 **Enter**。面板会立即显示英文原文并开始翻译，译好后可对照简体中文译文。关闭「译好再发送」时也可以使用。
+
+要先打开空面板，单独运行 `/bilingual-view translate` 或点击输入框上方设置栏的 **Translate（文本翻译）**。在 **English text（英文文本）** 中输入或粘贴英文，再按 **Enter** 翻译。
 
 已含中文正文或只有代码的文本直接显示原文。翻译失败时，点击 **Retry translation（重试翻译）** 可用同一段原文重试。按 **Esc** 关闭面板会清空本次原文和译文。
 
@@ -219,7 +221,7 @@ Claude 通过 `AskUserQuestion` 提问时，问题和选项描述可显示中文
 
 ## 输入翻译范围
 
-> **Claude 仍可能收到中文。** 除 `/btw` 的问题外，斜杠命令中的中文参数按原样发送。保留文本、已有历史记录、文件和其他上下文中的中文也不在输入翻译范围内。屏幕上显示中文消息，并不代表 Claude 收到的也是中文。
+> **Claude 仍可能收到中文。** 除 `/btw` 的问题外，斜杠命令按原文接收参数。保留文本、已有历史记录、文件和其他上下文中的中文也不在输入翻译范围内。屏幕上显示中文消息，并不代表 Claude 收到的也是中文。
 
 ### 提交前会翻译的输入
 
@@ -237,7 +239,7 @@ Claude 通过 `AskUserQuestion` 提问时，问题和选项描述可显示中文
 
 | 输入内容 | 处理方式与影响 |
 | --- | --- |
-| **`/btw` 以外的斜杠命令及其参数** | **整条命令保持原样**，包括内置命令、自定义技能和插件命令中的自然语言参数。 |
+| **`/btw` 以外的斜杠命令及其参数** | 内置命令、自定义技能和插件命令都按原文接收参数，包括其中的自然语言文本。 |
 | `!` Shell 命令 | 命令及其参数、输出保持原样，包括其中的中文。 |
 | `AskUserQuestion` 对话框中选中的选项 | 按选项原文提交，不会将选中的中文选项译成英文。 |
 | 翻译总开关或「译好再发送」处于 **Off（关闭）** 状态时的输入 | 问题正文、普通提示词和在 `AskUserQuestion` 中自行输入的回答均保留原语言。 |
@@ -347,7 +349,7 @@ Claude 通过 `AskUserQuestion` 提问时，问题和选项描述可显示中文
 
 插件只把需要翻译的文本发送到你配置的翻译服务，无需发送整个会话。这些文本包括普通提示词和 `/btw` 问题中的自然语言内容、在 `AskUserQuestion` 中自行输入的回答，以及主会话中需要翻译显示的文本。翻译服务凭据通过 Claude 的配置管理。
 
-在 `/bilingual-view translate` 面板中，按 **Enter** 后才会将需要翻译的文本发送到该服务。面板中的原文和译文不进入 Claude 主会话或翻译缓存。
+在 `/bilingual-view translate` 后附上英文时，提交命令就会将需要翻译的文本发送到该服务。先打开空面板时，在面板中输入英文并按 **Enter** 才会发送。插件仅在面板中显示原文和译文，不将它们提交给 Claude 或写入翻译缓存。
 
 关闭「译好再发送」后，发给 Claude 的输入按原文提交。主会话中的英文消息、回答和问题仍可使用该服务生成显示译文。
 
@@ -423,7 +425,7 @@ rm -rf "$HOME/.claude/bilingual-view/cache/"
 | --- | --- |
 | `/bilingual-view` 或 `/bilingual-view status` | 显示当前翻译设置，不显示 API 密钥。 |
 | `/bilingual-view settings` | 打开设置。 |
-| `/bilingual-view translate` | 打开[文本翻译面板](#单独翻译英文文本)，将输入或粘贴的英文译为简体中文。 |
+| `/bilingual-view translate [英文文本]` | 打开[文本翻译面板](#单独翻译英文文本)。带英文时立即翻译，省略时等待输入。 |
 | `/bilingual-view on` | 开启翻译。 |
 | `/bilingual-view off` | 关闭翻译。 |
 | `/bilingual-view check` | 发送简短示例翻译请求并报告结果。 |

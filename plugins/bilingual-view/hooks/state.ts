@@ -33,7 +33,7 @@ export type DisplayTask = {
 export type View = {
   session: string; path?: string; historyStamp?: string; loadingHistory: boolean;
   dialog?: string;
-  btwReply?: Block;
+  textTranslation?: Block;
   inputTranslations: Set<{ visible: boolean }>;
   finals: Map<string, FinalAnswerRef>;
   userOriginalIds: Map<string, string>;
