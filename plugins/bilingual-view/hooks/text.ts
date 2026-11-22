@@ -83,7 +83,11 @@ function protectedSpans(source: string, markdown: MarkdownSpans): { spans: Span[
     if (literal && literal.start < cursor) { next++; continue; }
     if (literal && (!match || literal.start <= match.index)) {
       spans.push(literal); cursor = literal.end; next++;
-      pattern.lastIndex = cursor; match = pattern.exec(source);
+      // A later match (or an exhausted search) survives this literal.
+      if (match && match.index < cursor) {
+        pattern.lastIndex = cursor;
+        match = pattern.exec(source);
+      }
       continue;
     }
     if (!match) break;
