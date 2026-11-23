@@ -376,7 +376,9 @@ cp -R plugins/bilingual-view/.claude-plugin plugins/bilingual-view/hooks "$HOME/
 
 ### Marketplace 方式
 
-点击设置栏中 **Settings** 右侧的 **Update now（立即更新）**，或运行 `/bilingual-view update`。交互式终端装好新版后，会在会话空闲时自动重载插件。看到 **Already up to date** 表示本次没有安装新版本。
+点击设置栏中 **Settings** 右侧的 **Update now（立即更新）**，或运行 `/bilingual-view update`。如果当前终端会话还在运行旧版，就会在空闲时自动重载插件。
+
+多个终端会话共用同一安装时，在一个会话更新后，到其他会话各点一次 **Update now** 即可加载新版。已经在用新版的会话会提示 **Already up to date**。
 
 在 Desktop 中，或终端提示 **Run /reload-plugins to apply** 时，可以在当前会话输入 `/reload-plugins`，也可以等下次启动时使用新版。
 

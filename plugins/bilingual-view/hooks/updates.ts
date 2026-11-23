@@ -35,6 +35,11 @@ async function installs(io: UpdateIO, directory: string): Promise<Record<string,
   return registry.plugins ?? {};
 }
 
+async function installedVersion(io: UpdateIO, target: Target): Promise<string | undefined> {
+  const rows = (await installs(io, target.directory))[target.id];
+  return rows?.find(row => row.scope === target.install.scope && row.projectPath === target.install.projectPath)?.version;
+}
+
 async function findTarget(io: UpdateIO): Promise<Target | undefined> {
   const config = await io.configDir();
   if (!config) return;
@@ -163,14 +168,13 @@ export class PluginUpdates {
     if (this.updating || (!due && !newlyEnabled)) return;
     const generation = ++this.generation;
     try {
-      const rows = (await installs(this.io, target.directory))[target.id];
-      const current = rows?.find(row => row.scope === target.install.scope && row.projectPath === target.install.projectPath);
-      if (!current || !/^[a-f0-9]{12,64}$/i.test(current.version)) {
+      const current = await installedVersion(this.io, target);
+      if (!current || !/^[a-f0-9]{12,64}$/i.test(current)) {
         this.setAvailable(false);
         return;
       }
       const offered = await offeredCommit(this.io, market);
-      if (generation === this.generation && offered) this.setAvailable(!offered.startsWith(current.version));
+      if (generation === this.generation && offered) this.setAvailable(!offered.startsWith(current));
     } catch { /* A failed background check is retried at the next interval. */ }
   }
 
@@ -197,17 +201,23 @@ export class PluginUpdates {
       failure = 'Could not update Bilingual View. Check the plugin under /plugins → Installed.';
       const update = await this.io.run([cli, 'plugin', 'update', target.id, '--scope', target.install.scope, '--json'], options);
       if (update.exitCode !== 0) throw new Error(failure);
-      const result = JSON.parse(update.stdout.trim().split(/\r?\n/).pop() || '{}');
-      if (result.updateOutcome !== 'updated' && result.updateOutcome !== 'up_to_date') throw new Error(failure);
+      const { updateOutcome, newVersion } = JSON.parse(update.stdout.trim().split(/\r?\n/).pop() || '{}');
+      if (updateOutcome !== 'updated' && updateOutcome !== 'up_to_date') throw new Error(failure);
       this.available = false;
-      if (result.updateOutcome === 'updated') {
-        // Let the update command return before asking the session to run another command.
-        this.io.after(0, async () => {
-          if (!this.stopped) await this.io.applyUpdate();
-        });
-      } else {
-        await this.io.toast('Already up to date.');
+      if (updateOutcome === 'up_to_date') {
+        // Another session may have updated this install since we loaded it.
+        const loaded = target.install.version;
+        const installed = typeof newVersion === 'string' && newVersion ? newVersion
+          : await installedVersion(this.io, target).catch(() => undefined);
+        if (!loaded || !installed || loaded === installed) {
+          await this.io.toast('Already up to date.');
+          return;
+        }
       }
+      // Let the update command return before asking the session to run another command.
+      this.io.after(0, async () => {
+        if (!this.stopped) await this.io.applyUpdate();
+      });
     } catch {
       this.failed = true;
       await this.io.toast(failure);
