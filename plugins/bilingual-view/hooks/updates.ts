@@ -16,6 +16,7 @@ export type UpdateIO = {
   offline(): Promise<boolean>;
   cli(): Promise<string>;
   run(argv: string[], init: ProcessRunInit): Promise<ProcessResult>;
+  applyUpdate(): Promise<void>;
   after(ms: number, run: () => Promise<void>): Timer;
   invalidate(): void;
   toast(text: string): void | Promise<void>;
@@ -199,7 +200,14 @@ export class PluginUpdates {
       const result = JSON.parse(update.stdout.trim().split(/\r?\n/).pop() || '{}');
       if (result.updateOutcome !== 'updated' && result.updateOutcome !== 'up_to_date') throw new Error(failure);
       this.available = false;
-      await this.io.toast(result.updateOutcome === 'updated' ? 'Updated · Run /reload-plugins to apply.' : 'Already up to date.');
+      if (result.updateOutcome === 'updated') {
+        // Let the update command return before asking the session to run another command.
+        this.io.after(0, async () => {
+          if (!this.stopped) await this.io.applyUpdate();
+        });
+      } else {
+        await this.io.toast('Already up to date.');
+      }
     } catch {
       this.failed = true;
       await this.io.toast(failure);

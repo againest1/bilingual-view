@@ -376,7 +376,9 @@ cp -R plugins/bilingual-view/.claude-plugin plugins/bilingual-view/hooks "$HOME/
 
 ### Marketplace 方式
 
-点击设置栏中 **Settings** 右侧的 **Update now（立即更新）**，或运行 `/bilingual-view update`。看到 **Already up to date** 表示已是最新版。安装新版后，在当前终端会话运行 `/reload-plugins` 即可使用，也可以下次启动时生效。
+点击设置栏中 **Settings** 右侧的 **Update now（立即更新）**，或运行 `/bilingual-view update`。交互式终端装好新版后，会在会话空闲时自动重载插件。看到 **Already up to date** 表示本次没有安装新版本。
+
+在 Desktop 中，或终端提示 **Run /reload-plugins to apply** 时，可以在当前会话输入 `/reload-plugins`，也可以等下次启动时使用新版。
 
 通过本项目的 Git 市场安装后，如果市场自动更新已关闭，插件会在打开会话时检查一次新版，之后每隔 5～10 分钟检查一次。看到 **↑ Update available（有可用更新）** 时，点击即可安装。如果已在 Claude Code 中禁用非必要后台联网，可用 **Update now** 按需检查并更新。更新失败时，按提示检查市场来源或网络，再点击 **Retry update（重试更新）**。
 
@@ -388,6 +390,8 @@ cp -R plugins/bilingual-view/.claude-plugin plugins/bilingual-view/hooks "$HOME/
 claude plugin marketplace update bilingual-view
 claude plugin update bilingual-view@bilingual-view
 ```
+
+用上述系统终端命令更新后，要在已打开的会话中立即使用新版，请在该会话运行 `/reload-plugins`。
 
 卸载插件：
 

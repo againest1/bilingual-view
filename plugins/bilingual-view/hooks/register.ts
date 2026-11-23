@@ -264,6 +264,16 @@ function pluginUpdates($: EngineInterface): PluginUpdates {
     declaredMarkets: () => $.settings.read({ key: 'extraKnownMarketplaces' }),
     offline: async () => /^(1|true|yes|on)$/i.test(await $.env.get('CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC') || ''),
     cli: () => claudeExecutable($), run: (argv, init) => $.process.run(argv, init),
+    applyUpdate: async () => {
+      if ((await $.session.surfaces()).includes('terminal')) {
+        await $.ui.toast('Updated · Reloading plugins…');
+        try {
+          await $.command.run({ command: 'reload-plugins' });
+          return;
+        } catch { /* An interrupted session can refuse a queued command. */ }
+      }
+      await $.ui.toast('Updated · Run /reload-plugins to apply.');
+    },
     after: (ms, run) => $.clock.after(ms, run), invalidate: () => $.ui.invalidate('ui.render'),
     toast: text => $.ui.toast(text),
   });
